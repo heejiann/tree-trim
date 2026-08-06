@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>修剪树枝管理系统</title>
+<link rel="stylesheet" href="/static/leaflet/leaflet.css"/>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1f2329; --mut:#8a8f99;
+    --line:#e5e6eb; --brand:#0f6e56; --brand2:#185fa5; --warn:#ba7517; --ok:#3b6d11;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);font-size:15px;line-height:1.55;overflow:hidden}
+  header{background:linear-gradient(135deg,#0f6e56,#185fa5);color:#fff;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;gap:12px}
+  header .ttl{flex:1;min-width:0;text-align:center}
+  header .ttl h1{margin:0;font-size:17px;font-weight:600}
+  header .ttl p{margin:3px 0 0;font-size:12px;opacity:.85}
+  header img.logo{height:38px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+  header .back-btn,header .exit{background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+  button{font-size:15px;font-weight:600;border:none;border-radius:10px;padding:12px 16px;cursor:pointer}
+  .btn-primary{background:var(--brand);color:#fff;width:100%}
+  .btn-ghost{background:#eef1f5;color:var(--ink);width:100%}
+  .btn-sm{background:#eef1f5;color:var(--brand);padding:8px 12px;font-size:13px;border-radius:8px}
+  .hidden{display:none !important}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:rgba(0,0,0,.82);
+    color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:200}
+  .toast.show{opacity:1}
+
+  /* 登录页 —— 固定全屏覆盖，未登录时什么都看不到 */
+  #loginView{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#0f6e56,#185fa5)}
+  .login-card{width:340px;max-width:90vw;background:#fff;border-radius:18px;padding:30px 26px;
+    box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:center}
+  .login-card img{max-width:180px;width:auto;height:auto;max-height:90px;margin-bottom:16px}
+  .login-card h2{margin:4px 0 2px;font-size:20px;color:var(--ink)}
+  .login-card .sub{font-size:12px;color:var(--mut);margin-bottom:18px}
+  .login-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:15px;margin-bottom:12px;outline:none}
+  .login-card input:focus{border-color:var(--brand)}
+  .login-err{color:#d4380d;font-size:13px;min-height:18px;margin-bottom:8px}
+
+  /* 主框架 */
+  #appView{display:flex;flex-direction:column;height:100vh}
+  main{flex:1;position:relative;overflow:hidden;background:var(--bg)}
+  #homeSection,#mapSection,#jobSection{position:absolute;inset:0}
+  #homeSection{display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)}
+  #jobSection{overflow:auto}
+
+  /* 首页两个大按钮 */
+  .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;width:100%;max-width:640px}
+  .home-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:34px 22px;text-align:center;cursor:pointer;
+    box-shadow:0 4px 16px rgba(0,0,0,.06);transition:transform .15s,border-color .15s,box-shadow .15s}
+  .home-card:hover,.home-card:active{border-color:var(--brand);transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.1)}
+  .home-card .icon{font-size:46px;margin-bottom:14px}
+  .home-card h3{margin:0 0 10px;font-size:19px;color:var(--brand)}
+  .home-card p{margin:0;font-size:13px;color:var(--mut);line-height:1.55}
+  @media(max-width:520px){.home-grid{grid-template-columns:1fr}}
+
+  /* 作业录入（复用） */
+  .wrap{max-width:560px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--mut);margin:12px 0 6px}
+  label:first-child{margin-top:0}
+  input,select,textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;
+    font-size:15px;background:#fff;color:var(--ink);outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--brand)}
+  textarea{resize:vertical;min-height:64px}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  .pole{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);
+    border-radius:10px;padding:12px;margin-top:8px;cursor:pointer}
+  .pole:hover{border-color:var(--brand)}
+  .pole .no{font-weight:600}.pole .d{font-size:12px;color:var(--mut)}
+  .tag{display:inline-block;background:#e1f5ee;color:var(--brand);font-size:12px;padding:2px 8px;border-radius:6px;margin-left:8px}
+  hr{border:none;border-top:1px dashed var(--line);margin:14px 0}
+  .link{color:var(--brand2);font-size:13px;cursor:pointer;margin-top:8px;display:inline-block}
+  .locline{font-size:13px;color:var(--mut);margin-top:8px}
+  .step{font-size:12px;color:var(--brand);font-weight:600;margin-bottom:4px}
+
+  /* 地图管理 */
+  /* 缩小地图叠加层文字（约原 2/3；瓦片内路名/POI 文字是图片，无法调） */
+  .leaflet-control-attribution{font-size:8px !important;padding:1px 5px !important}
+  .leaflet-control-zoom a{width:26px;height:26px;line-height:24px;font-size:15px}
+  .leaflet-popup-content{font-size:13px;margin:10px 12px}
+  .leaflet-popup-content b{font-size:14px}
+  .search-bar{position:absolute;top:12px;left:12px;right:12px;z-index:1000;background:#fff;
+    border-radius:12px;padding:8px 10px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .search-bar input{border:none;padding:8px 4px;margin:0;font-size:15px}
+  .search-bar input:focus{border:none}
+  .search-bar .cnt{font-size:12px;color:var(--mut);white-space:nowrap}
+  #mapAdmin{position:absolute;inset:0;background:#e8eaed}
+  #poleDetail{position:absolute;right:12px;top:74px;bottom:12px;width:340px;max-width:calc(100% - 24px);
+    background:#fff;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.22);z-index:1000;
+    display:none;flex-direction:column;overflow:hidden}
+  #poleDetail.show{display:flex}
+  #poleDetail .ph{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  #poleDetail .ph b{font-size:15px}
+  #poleDetail .ph .x{cursor:pointer;color:var(--mut);font-size:20px;line-height:1}
+  #poleDetail .pb{padding:12px 14px;overflow:auto;font-size:13px}
+  .kv{margin:2px 0;color:var(--ink)}
+  .kv .k{color:var(--mut)}
+  .nav-row{display:flex;gap:8px;margin:10px 0}
+  .nav-row a{flex:1;text-align:center;text-decoration:none;color:#fff;border-radius:10px;padding:10px;font-size:14px;font-weight:600}
+  .nav-row .amap{background:#0f6e56}.nav-row .baidu{background:#1a73e8}
+  .job-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}
+  .job-item .jt{font-weight:600;color:var(--brand2)}
+  .job-item .jm{font-size:12px;color:var(--mut);margin-top:3px}
+
+  /* 地图选点弹窗 */
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .mask.show{display:flex}
+  .mapbox{background:#fff;border-radius:14px;width:100%;max-width:520px;overflow:hidden}
+  .mapbox .bar{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .mapbox .bar b{font-size:14px}
+  #map{height:340px;width:100%}
+  .mapbox .tip{font-size:12px;color:var(--mut);padding:8px 14px;border-top:1px solid var(--line)}
+  .mapbox .ft{padding:12px 14px;display:flex;gap:10px}
+  .mapbox .ft button{flex:1}
+</style>
+</head>
+<body>
+
+<!-- 登录页 -->
+<div id="loginView">
+  <div class="login-card">
+    <img src="/static/senyo.png" alt="SENYO">
+    <h2>修剪树枝管理系统</h2>
+    <div class="sub">SENYO · 电杆定位与修剪作业管理</div>
+    <input id="lg_user" placeholder="账号" autocomplete="username">
+    <input id="lg_pass" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-err" id="lg_err"></div>
+    <button class="btn-primary" onclick="doLogin()">登 录</button>
+  </div>
+</div>
+
+<!-- 主应用 -->
+<div id="appView" class="hidden">
+  <header>
+    <button class="back-btn hidden" id="backBtn" onclick="showPage('home')">← 返回</button>
+    <div class="ttl"><h1>修剪树枝管理系统</h1><p id="headerSub">请选择功能</p></div>
+    <img class="logo" src="/static/logo.png" alt="SENYO">
+    <button class="exit" onclick="doLogout()">退出</button>
+  </header>
+  <main>
+    <!-- 首页：两个大按钮 -->
+    <div id="homeSection">
+      <div class="home-grid">
+        <div class="home-card" onclick="showPage('map')">
+          <div class="icon">🗺️</div>
+          <h3>地图管理</h3>
+          <p>查看电杆分布、搜索编号、浏览作业记录、一键导航</p>
+        </div>
+        <div class="home-card" onclick="showPage('job')">
+          <div class="icon">📝</div>
+          <h3>作业记录</h3>
+          <p>搜索或新建电杆，录入当天修剪作业与照片</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 板块1：地图管理 -->
+    <div id="mapSection" class="hidden">
+      <div class="search-bar">
+        <input id="mapSearch" placeholder="搜索电杆编号…" oninput="filterMap()" style="flex:1">
+        <span class="cnt" id="mapCnt"></span>
+      </div>
+      <div id="mapAdmin"></div>
+      <div id="poleDetail">
+        <div class="ph"><b id="pd_title">电杆详情</b><span class="x" onclick="hideDetail()">×</span></div>
+        <div class="pb" id="pd_body"></div>
+      </div>
+    </div>
+
+    <!-- 板块2：作业记录（原录入端） -->
+    <div id="jobSection" class="hidden">
+      <div class="wrap">
+        <div class="card" id="searchCard">
+          <div class="step">第 1 步 · 查找电杆</div>
+          <div class="row">
+            <input id="q" placeholder="输入电杆编号查找" onkeydown="if(event.key==='Enter')searchPoles()">
+            <button class="btn-sm" style="flex:0 0 88px" onclick="searchPoles()">搜索</button>
+          </div>
+          <div id="poleList"></div>
+          <span class="link" onclick="showNewPole()">找不到？点此新建电杆 →</span>
+        </div>
+
+        <div class="card hidden" id="newPoleCard">
+          <div class="step">第 1.5 步 · 新建电杆（仅录编号 + 定位）</div>
+          <label>电杆编号 *</label>
+          <input id="np_no" placeholder="10kV电站F1什么线#01杆">
+          <label>定位 *</label>
+          <button class="btn-sm" style="width:auto" onclick="openMap()">选择定位（地图选点）</button>
+          <div class="locline" id="locline">未选择定位</div>
+          <label>位置描述</label>
+          <input id="np_desc" placeholder="如 XX路XX号旁">
+          <label>所属供电所（默认：佛山 / 三水 / 乐平）</label>
+          <select id="np_area1" onchange="fillArea2()"><option value="">请选择市局</option></select>
+          <select id="np_area2" onchange="fillArea3()" style="margin-top:10px"><option value="">请选择区/县供电局</option></select>
+          <select id="np_area3" style="margin-top:10px"><option value="">请选择供电所（无则选"无"）</option></select>
+          <button class="btn-primary" style="margin-top:14px" onclick="submitNewPole()">新建并继续</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="backToSearch()">返回</button>
+        </div>
+
+        <div class="card hidden" id="jobCard">
+          <div class="step">第 2 步 · 记录当天作业</div>
+          <div style="font-size:13px;color:var(--mut)">当前电杆：<b id="curPole"></b> <span class="tag" id="curTag">已选</span></div>
+          <hr>
+          <label>工作票编号</label>
+          <input id="j_ticket" placeholder="如2026-11-7-001">
+          <div class="row">
+            <div><label>作业日期 *</label><input id="j_date" type="date"></div>
+          </div>
+          <label>作业人员</label>
+          <input id="j_worker" placeholder="姓名">
+          <label>树木品种</label>
+          <input id="j_tree" placeholder="如 榕树">
+          <label>修剪前隐患等级</label>
+          <select id="j_risk">
+            <option>低</option><option>中</option><option>高</option>
+          </select>
+          <label>剪下树枝量</label>
+          <input id="j_branch" placeholder="如 3 车 / 200kg">
+          <label>修剪前情况（拍照 / 选照片）</label>
+          <input id="j_before" type="file" accept="image/*" capture="environment" multiple>
+          <label>修剪后情况（拍照 / 选照片）</label>
+          <input id="j_after" type="file" accept="image/*" capture="environment" multiple>
+          <label>站班会情况（拍照 / 选照片）</label>
+          <input id="j_station" type="file" accept="image/*" capture="environment" multiple>
+          <label>标示牌等线路装置状态</label>
+          <select id="j_sign">
+            <option>完好</option><option>缺失</option><option>需更换</option>
+          </select>
+          <label>附件（拍照 / 选照片，记录有缺陷的标示牌等线路装置状态）</label>
+          <input id="j_attach" type="file" accept="image/*" capture="environment" multiple>
+          <label>备注</label>
+          <textarea id="j_note" placeholder="其他情况"></textarea>
+          <button class="btn-primary" style="margin-top:14px" onclick="submitJob()">提交作业</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="resetAll()">重新选择电杆</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 地图选点弹窗 -->
+<div class="mask" id="mapMask">
+  <div class="mapbox">
+    <div class="bar"><b>在地图上点击选点</b><span class="link" onclick="closeMap()">取消</span></div>
+    <div id="map"></div>
+    <div class="tip">点击地图位置落点，再点确认</div>
+    <div class="ft">
+      <button class="btn-ghost" onclick="closeMap()">取消</button>
+      <button class="btn-primary" onclick="confirmMap()">确认选点</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/leaflet/leaflet.js"></script>
+<script>
+/* ===== 通用 ===== */
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+const AREA_TREE = {
+  "佛山供电局": {
+    "禅城供电局": [], "南海供电局": ["大沥供电所","里水供电所","九江供电所","西樵供电所","罗村供电所","平洲供电所","狮山供电所"],
+    "顺德供电局": ["大良供电所","北滘供电所","陈村供电所","乐从供电所","伦教供电所","容桂供电所","均安供电所","杏坛供电所"],
+    "三水供电局": ["西南供电所","白坭供电所","乐平供电所","芦苞供电所","大塘供电所"],
+    "高明供电局": ["荷城供电所","杨和供电所","明城供电所","更合供电所"]
+  },
+  "广州供电局": {
+    "越秀供电局": [], "荔湾供电局": [], "海珠供电局": [], "天河供电局": [],
+    "白云供电局": ["江高供电所","人和供电所","钟落潭供电所","西郊供电所"],
+    "黄埔供电局": ["九龙供电所","萝岗供电所"],
+    "番禺供电局": ["南村供电所","石楼供电所","大岗供电所","东涌供电所","大石供电所"],
+    "花都供电局": ["花东供电所","赤坭供电所","炭步供电所","雅瑶供电所"],
+    "增城供电局": ["新塘供电所","仙村供电所","石滩供电所","派潭供电所"],
+    "从化供电局": ["城郊供电所","温泉供电所","良口供电所","鳌头供电所","太平供电所","吕田供电所"]
+  }
+};
+
+/* ===== 登录 ===== */
+async function boot(){
+  try{
+    const r = await fetch('/api/me', {credentials:'same-origin'});
+    if(r.ok){ const d = await r.json(); enterApp(d.user); return; }
+  }catch(e){}
+  document.getElementById('loginView').classList.remove('hidden');
+}
+async function doLogin(){
+  const u = document.getElementById('lg_user').value.trim();
+  const p = document.getElementById('lg_pass').value;
+  const r = await fetch('/api/login', {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({user:u, pass:p})});
+  if(r.ok){ document.getElementById('lg_err').textContent=''; enterApp(); }
+  else { document.getElementById('lg_err').textContent='账号或密码错误'; }
+}
+async function doLogout(){
+  await fetch('/api/logout', {method:'POST', credentials:'same-origin'});
+  document.getElementById('appView').classList.add('hidden');
+  document.getElementById('loginView').classList.remove('hidden');
+  document.getElementById('lg_pass').value='';
+  showPage('home', true);
+}
+function enterApp(){
+  document.getElementById('loginView').classList.add('hidden');
+  document.getElementById('appView').classList.remove('hidden');
+  showPage('home', true);
+}
+
+/* ===== 页面切换：首页 / 地图 / 作业 ===== */
+function showPage(page, silent){
+  const home = document.getElementById('homeSection');
+  const map = document.getElementById('mapSection');
+  const job = document.getElementById('jobSection');
+  const backBtn = document.getElementById('backBtn');
+  const sub = document.getElementById('headerSub');
+
+  // 全部隐藏
+  home.classList.add('hidden');
+  map.classList.add('hidden');
+  job.classList.add('hidden');
+  backBtn.classList.add('hidden');
+
+  if(page==='home'){
+    home.classList.remove('hidden');
+    sub.textContent = '请选择功能';
+  } else if(page==='map'){
+    map.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    sub.textContent = '地图管理 · 搜索电杆 / 查看作业 / 导航';
+    if(!_mapAdmin) initAdminMap();
+    else setTimeout(()=>_mapAdmin.invalidateSize(), 200);
+    loadMapData();
+  } else if(page==='job'){
+    job.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    sub.textContent = '作业记录 · 搜杆 / 建杆 / 录作业';
+    searchPoles();
+  }
+  if(!silent) hideDetail();
+}
+
+/* ===== 地图管理 ===== */
+let _mapAdmin=null, _layer=null, _allPoles=[], _poleById={}, _markers={};
+function initAdminMap(){
+  _mapAdmin = L.map('mapAdmin', {zoomControl:true}).setView([23.13,113.26], 11);
+  L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'© 高德地图'}).addTo(_mapAdmin);
+  _layer = L.layerGroup().addTo(_mapAdmin);
+  setTimeout(()=>_mapAdmin.invalidateSize(), 300);
+}
+async function loadMapData(){
+  if(!_mapAdmin) initAdminMap();
+  try{
+    const r = await fetch('/api/poles/all', {credentials:'same-origin'});
+    const d = await r.json();
+    _allPoles = d.items || [];
+    _poleById = {};
+    _allPoles.forEach(p=>_poleById[p.record_id]=p);
+    filterMap();
+  }catch(e){ toast('加载电杆失败'); }
+}
+function filterMap(){
+  const q = (document.getElementById('mapSearch').value||'').trim().toLowerCase();
+  const list = _allPoles.filter(p=> !q || (p.pole_no||'').toLowerCase().includes(q));
+  _layer.clearLayers();
+  _markers = {};
+  let shown=0;
+  list.forEach(p=>{
+    if(p.lat==null || p.lng==null) return;
+    const m = L.marker([p.lat, p.lng]).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
+    m.on('click', ()=>showDetail(p.record_id));
+    _layer.addLayer(m);
+    _markers[p.record_id]=m;
+    shown++;
+  });
+  document.getElementById('mapCnt').textContent = shown + ' / ' + _allPoles.length + ' 杆';
+}
+async function showDetail(rid){
+  const p = _poleById[rid];
+  if(!p) return;
+  if(p.lat!=null) _mapAdmin.setView([p.lat, p.lng], 17);
+  if(_markers[rid]) _markers[rid].openPopup();
+  let jobs=[];
+  try{
+    const r = await fetch('/api/poles/'+rid+'/jobs', {credentials:'same-origin'});
+    const d = await r.json();
+    jobs = d.items || [];
+  }catch(e){}
+  // 导航链接（WGS84 -> GCJ02 -> BD09）
+  const [glng,glat] = (p.lng!=null)?wgs2gcj(p.lng,p.lat):[p.lng,p.lat];
+  const [blng,blat] = (glng!=null)?gcj2bd(glng,glat):[p.lng,p.lat];
+  const name = encodeURIComponent(p.pole_no||'电杆');
+  const amap = (glng!=null)?('https://uri.amap.com/navigation?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&src=mypage&callnative=1'):'#';
+  const baidu = (blng!=null)?('http://api.map.baidu.com/marker?location='+blat.toFixed(6)+','+blng.toFixed(6)+'&title='+name+'&content='+encodeURIComponent(p.desc||'电杆位置')+'&output=html&coord_type=bd09ll&src=webapp'):'#';
+  let html = '';
+  html += '<div class="kv"><span class="k">电杆编号：</span>'+esc(p.pole_no||'-')+'</div>';
+  html += '<div class="kv"><span class="k">供电所：</span>'+esc(p.area||'-')+'</div>';
+  html += '<div class="kv"><span class="k">状态：</span>'+esc(p.status||'-')+'</div>';
+  html += '<div class="kv"><span class="k">描述：</span>'+esc(p.desc||'-')+'</div>';
+  html += '<div class="nav-row"><a class="amap" href="'+amap+'" target="_blank">高德导航</a><a class="baidu" href="'+baidu+'" target="_blank">百度导航</a></div>';
+  html += '<div style="font-weight:600;margin:10px 0 4px">作业记录（'+jobs.length+' 条）</div>';
+  if(!jobs.length) html += '<div style="color:#8a8f99">暂无作业记录</div>';
+  jobs.forEach(j=>{
+    html += '<div class="job-item"><div class="jt">'+esc(j.ticket||'工作票')+'</div>'
+      + '<div class="jm">日期：'+esc(j.date||'-')+'　人员：'+esc(j.worker||'-')+'</div>'
+      + '<div class="jm">隐患：'+esc(j.risk||'-')+'　标示牌：'+esc(j.sign||'-')+'　照片：'+j.photos+' 张</div>'
+      + (j.note?('<div class="jm">备注：'+esc(j.note)+'</div>'):'')
+      + '</div>';
+  });
+  document.getElementById('pd_title').textContent = p.pole_no || '电杆详情';
+  document.getElementById('pd_body').innerHTML = html;
+  document.getElementById('poleDetail').classList.add('show');
+}
+function hideDetail(){ document.getElementById('poleDetail').classList.remove('show'); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* 坐标转换：WGS84 -> GCJ02 -> BD09 */
+const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
+function outOfChina(lng,lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
+function tLat(lng,lat){let r=-100+2*lng+3*lat+0.2*lat*lat+0.1*lng*lat+0.2*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*PI)+20*Math.sin(2*lng*PI))*2/3;r+=(20*Math.sin(lat*PI)+40*Math.sin(lat/3*PI))*2/3;r+=(160*Math.sin(lat/12*PI)+320*Math.sin(lat*PI/30))*2/3;return r;}
+function tLng(lng,lat){let r=300+lng+2*lat+0.1*lng*lng+0.1*lng*lat+0.1*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*PI)+20*Math.sin(2*lng*PI))*2/3;r+=(20*Math.sin(lng*PI)+40*Math.sin(lng/3*PI))*2/3;r+=(150*Math.sin(lng/12*PI)+300*Math.sin(lng/30*PI))*2/3;return r;}
+function wgs2gcj(lng,lat){if(outOfChina(lng,lat))return[lng,lat];let dlat=tLat(lng-105,lat-35),dlng=tLng(lng-105,lat-35);let rl=lat/180*PI,m=Math.sin(rl);m=1-EE*m*m;let sm=Math.sqrt(m);dlat=(dlat*180)/((A*(1-EE))/(m*sm)*PI);dlng=(dlng*180)/((A/sm)*Math.cos(rl)*PI);return [lng+dlng,lat+dlat];}
+function gcj2bd(lng,lat){let x=lng,y=lat,z=Math.sqrt(x*x+y*y)+0.00002*Math.sin(y*PI),th=Math.atan2(y,x)+0.000003*Math.cos(x*PI);return [z*Math.cos(th)+0.0065,z*Math.sin(th)+0.0065];}
+
+/* ===== 作业录入（原逻辑） ===== */
+function show(id){document.getElementById(id).classList.remove('hidden');}
+function hide(id){document.getElementById(id).classList.add('hidden');}
+function initArea(){
+  const s1=document.getElementById('np_area1');
+  s1.innerHTML='<option value="">请选择市局</option>';
+  Object.keys(AREA_TREE).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;s1.appendChild(o);});
+  s1.value="佛山供电局";
+  fillArea2();
+}
+function fillArea2(){
+  const s1=document.getElementById('np_area1'),s2=document.getElementById('np_area2'),s3=document.getElementById('np_area3');
+  s2.innerHTML='<option value="">请选择区/县供电局</option>'; s3.innerHTML='<option value="">请选择供电所</option>';
+  const l2=AREA_TREE[s1.value]||{};
+  Object.keys(l2).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s2.appendChild(o);});
+  if(l2["三水供电局"]!==undefined) s2.value="三水供电局";
+  fillArea3();
+}
+function fillArea3(){
+  const s1=document.getElementById('np_area1'),s2=document.getElementById('np_area2'),s3=document.getElementById('np_area3');
+  s3.innerHTML='<option value="">请选择供电所</option>';
+  const list=(AREA_TREE[s1.value]&&AREA_TREE[s1.value][s2.value])||[];
+  list.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s3.appendChild(o);});
+  if(list.length===0){const n=document.createElement('option');n.value="无";n.textContent="无";s3.appendChild(n);s3.value="无";}
+  else if(list.includes("乐平供电所")) s3.value="乐平供电所";
+}
+async function searchPoles(){
+  const q=document.getElementById('q').value.trim();
+  const r=await fetch('/api/poles?q='+encodeURIComponent(q), {credentials:'same-origin'});
+  const d=await r.json();
+  const box=document.getElementById('poleList'); box.innerHTML='';
+  if(!d.items||!d.items.length){box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">无匹配电杆</div>';return;}
+  d.items.forEach(p=>{
+    const el=document.createElement('div'); el.className='pole';
+    el.innerHTML=`<div><div class="no">${esc(p.pole_no)}</div><div class="d">${esc(p.desc||'(无描述)')}</div></div><div class="d">选择 ›</div>`;
+    el.onclick=()=>selectPole(p.record_id,p.pole_no);
+    box.appendChild(el);
+  });
+}
+function showNewPole(){hide('searchCard');show('newPoleCard');initArea();fillArea2();fillArea3();}
+function backToSearch(){hide('newPoleCard');show('searchCard');}
+function selectPole(rid,no){
+  window._rid=rid;
+  document.getElementById('curPole').textContent=no;
+  hide('searchCard');hide('newPoleCard');show('jobCard');
+  if(!document.getElementById('j_date').value) document.getElementById('j_date').value=new Date().toISOString().slice(0,10);
+}
+let _map=null,_marker=null,_pick=null;
+function openMap(){
+  document.getElementById('mapMask').classList.add('show');
+  if(!window.L){toast('地图组件加载失败，请检查网络');return;}
+  if(_map) return;
+  _map=L.map('map').setView([23.13,113.26],13);
+  L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'© 高德地图'}).addTo(_map);
+  _map.on('click',e=>{ if(_marker)_marker.setLatLng(e.latlng);else _marker=L.marker(e.latlng).addTo(_map); _pick={lat:e.latlng.lat,lng:e.latlng.lng}; });
+  setTimeout(()=>_map.invalidateSize(),200);
+}
+function closeMap(){document.getElementById('mapMask').classList.remove('show');if(_map){_map.remove();_map=null;_marker=null;}}
+function confirmMap(){
+  if(!_pick){toast('请在地图上点击选点');return;}
+  window._lat=_pick.lat;window._lng=_pick.lng;
+  document.getElementById('locline').textContent='已选定位：'+_pick.lat.toFixed(6)+', '+_pick.lng.toFixed(6);
+  closeMap();
+}
+async function submitNewPole(){
+  const no=document.getElementById('np_no').value.trim();
+  if(!no){toast('电杆编号必填');return;}
+  if(window._lat==null||window._lng==null){toast('请先选择定位');return;}
+  const a1=document.getElementById('np_area1').value,a2=document.getElementById('np_area2').value,a3=document.getElementById('np_area3').value;
+  const area=[a1,a2,a3].filter(v=>v&&v!=="无").join(' / ');
+  const r=await fetch('/api/poles',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+    body:JSON.stringify({pole_no:no,lng:String(window._lng),lat:String(window._lat),desc:document.getElementById('np_desc').value,area})});
+  const d=await r.json();
+  if(!d.record_id){toast('建杆失败: '+(d.error||''));return;}
+  toast('电杆已新建'); selectPole(d.record_id,no);
+}
+async function filesToB64(input){
+  return Promise.all(Array.from(input.files).map(f=>new Promise(res=>{
+    const r=new FileReader();
+    r.onload=()=>{const p=String(r.result).split(',');res({name:f.name,data:p[1]||''});};
+    r.onerror=()=>res(null);
+    r.readAsDataURL(f);
+  }))).then(x=>x.filter(Boolean));
+}
+async function submitJob(){
+  if(!window._rid){toast('请先选择或新建电杆');return;}
+  if(!document.getElementById('j_ticket').value.trim()){toast('工作票编号必填');return;}
+  const photos={before:await filesToB64(document.getElementById('j_before')),after:await filesToB64(document.getElementById('j_after')),
+    station:await filesToB64(document.getElementById('j_station')),attach:await filesToB64(document.getElementById('j_attach'))};
+  const body={pole_record_id:window._rid,ticket:document.getElementById('j_ticket').value.trim(),job_date:document.getElementById('j_date').value,
+    worker:document.getElementById('j_worker').value,tree:document.getElementById('j_tree').value,risk:document.getElementById('j_risk').value,
+    branch:document.getElementById('j_branch').value,sign:document.getElementById('j_sign').value,note:document.getElementById('j_note').value,photos};
+  const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.ok){toast('作业已提交 ✓');resetAll();}
+  else toast('提交失败: '+(d.error||JSON.stringify(d)));
+}
+function resetAll(){
+  hide('jobCard');hide('newPoleCard');show('searchCard');
+  document.getElementById('poleList').innerHTML='';document.getElementById('q').value='';
+  document.getElementById('locline').textContent='未选择定位';
+  ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ['j_risk','j_sign'].forEach(id=>document.getElementById(id).selectedIndex=0);
+  window._lat=null;window._lng=null;window._rid=null;_pick=null;
+  initArea();
+}
+
+boot();
+</script>
+</body>
+</html>
