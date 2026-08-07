@@ -17,7 +17,7 @@
     display:flex;align-items:center;justify-content:space-between;gap:12px}
   header .ttl{flex:1;min-width:0;text-align:center}
   header .ttl h1{margin:0;font-size:17px;font-weight:600}
-  header .ttl p{margin:3px 0 0;font-size:12px;opacity:.85}
+  header .ttl p{display:none}
   header img.logo{height:38px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
   header .back-btn,header .exit{background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
   button{font-size:15px;font-weight:600;border:none;border-radius:10px;padding:12px 16px;cursor:pointer}
@@ -81,6 +81,7 @@
   /* 地图管理 */
   /* 缩小地图叠加层文字（约原 2/3；瓦片内路名/POI 文字是图片，无法调） */
   .leaflet-control-attribution{font-size:8px !important;padding:1px 5px !important}
+  .leaflet-control-zoom{margin-top:72px !important}
   .leaflet-control-zoom a{width:26px;height:26px;line-height:24px;font-size:15px}
   .leaflet-popup-content{font-size:13px;margin:10px 12px}
   .leaflet-popup-content b{font-size:14px}
