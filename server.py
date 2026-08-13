@@ -359,6 +359,10 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/health":
             self._send(200, {"ok": True})
             return
+        # 台风预警图层：公开气象数据，免登录（避免每次部署后所有人都需重新登录）
+        if u.path == "/api/weather/typhoon":
+            self._typhoon()
+            return
         if u.path == "/api/me":
             user = self._auth()
             if not user:
@@ -448,9 +452,6 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^/api/photo/([\w.\-]+)$", u.path)
         if m:
             self._photo(m.group(1))
-            return
-        if u.path == "/api/weather/typhoon":
-            self._typhoon()
             return
         self._send(404, {"error": "not found"})
 
