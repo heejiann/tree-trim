@@ -165,6 +165,20 @@ def photos_to_attach(items):
     return out
 
 
+def attaches_to_list(val):
+    """飞书附件字段读取为 [{file_token,name}] 列表，供前端展示。"""
+    out = []
+    for x in (val or []):
+        if isinstance(x, dict):
+            tok = x.get("file_token") or ""
+            if not tok and x.get("url"):
+                # 极少数情况下只返回临时 url，转交前端直连
+                tok = x["url"]
+            if tok:
+                out.append({"file_token": tok, "name": x.get("name", "")})
+    return out
+
+
 def today_ms():
     d = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return int(d.timestamp() * 1000)
@@ -207,6 +221,37 @@ class H(BaseHTTPRequestHandler):
         if m and m.group(1) in SESSIONS:
             return SESSIONS[m.group(1)]
         return None
+
+    def _photo(self, ftok):
+        """代理飞书附件图片：用 bitable 附件临时下载链接接口换取直链后流式返回。
+        该接口无需 drive 额外权限，规避了鉴权/CORS/链接过期问题。"""
+        t = get_token()
+        s, o = api("GET", f"/drive/v1/medias/batch_get_tmp_download_url?file_tokens={ftok}", token=t)
+        url = None
+        if s // 100 == 2:
+            items = (o.get("data") or {}).get("tmp_download_urls") or []
+            for it in items:
+                if it.get("file_token") == ftok:
+                    url = it.get("tmp_download_url")
+                    break
+            if not url and items:
+                url = items[0].get("tmp_download_url")
+        if not url:
+            self._send(404, {"error": "photo not found"})
+            return
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = r.read()
+            ct = r.headers.get("Content-Type") or "image/jpeg"
+        except Exception as e:
+            self._send(502, {"error": "fetch photo failed: " + str(e)})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_GET(self):
         u = urllib.parse.urlparse(self._path())
@@ -314,11 +359,17 @@ class H(BaseHTTPRequestHandler):
                                 "tree": fv.get("树木品种", ""),
                                 "risk": fv.get("修剪前隐患等级", ""),
                                 "sign": fv.get("标示牌状态", ""),
-                                "photos": len(fv.get("修剪前照片", [])) + len(fv.get("修剪后照片", []))
-                                          + len(fv.get("站班会情况", [])) + len(fv.get("附件", [])),
-                                "note": fv.get("备注", "")})
+                                "note": fv.get("备注", ""),
+                                "before": attaches_to_list(fv.get("修剪前照片")),
+                                "after": attaches_to_list(fv.get("修剪后照片")),
+                                "station": attaches_to_list(fv.get("站班会情况")),
+                                "attach": attaches_to_list(fv.get("附件"))})
             out.sort(key=lambda x: x["date"] or "", reverse=True)
             self._send(200, {"items": out})
+            return
+        m = re.match(r"^/api/photo/([\w.\-]+)$", u.path)
+        if m:
+            self._photo(m.group(1))
             return
         self._send(404, {"error": "not found"})
 

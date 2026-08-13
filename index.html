@@ -109,6 +109,17 @@
   .job-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}
   .job-item .jt{font-weight:600;color:var(--brand2)}
   .job-item .jm{font-size:12px;color:var(--mut);margin-top:3px}
+  /* 作业照片缩略图组 */
+  .pg-l{font-size:12px;color:var(--mut);font-weight:600;margin:6px 0 4px}
+  .pg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .pg-i{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:6px;cursor:pointer;background:#eee;border:1px solid var(--line)}
+  /* 照片大图查看器 */
+  #photoViewer{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:2000;flex-direction:column}
+  #photoViewer.show{display:flex}
+  #photoViewer .pv-img{max-width:96%;max-height:82%;object-fit:contain;border-radius:8px}
+  #photoViewer .pv-close{position:absolute;top:14px;right:18px;color:#fff;font-size:34px;line-height:1;cursor:pointer;z-index:1}
+  #photoViewer .pv-nav{position:absolute;bottom:18px;left:0;right:0;display:flex;align-items:center;justify-content:center;gap:26px;color:#fff;font-size:15px}
+  #photoViewer .pv-nav span{cursor:pointer;user-select:none;padding:6px 16px;background:rgba(255,255,255,.15);border-radius:20px}
 
   /* 地图选点弹窗 */
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
@@ -259,6 +270,17 @@
   </div>
 </div>
 
+<!-- 照片大图查看器 -->
+<div class="mask" id="photoViewer">
+  <div class="pv-close" onclick="closePhoto()">×</div>
+  <img class="pv-img" id="pv_img" src="" alt="照片" onclick="closePhoto()">
+  <div class="pv-nav">
+    <span id="pv_prev" onclick="pvStep(-1)">‹</span>
+    <span id="pv_idx"></span>
+    <span id="pv_next" onclick="pvStep(1)">›</span>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="/static/leaflet/leaflet.js"></script>
@@ -390,6 +412,7 @@ async function showDetail(rid){
   if(p.lat!=null) _mapAdmin.setView([p.lat, p.lng], 17);
   if(_markers[rid]) _markers[rid].openPopup();
   let jobs=[];
+  _galleries=[];
   try{
     const r = await fetch('/api/poles/'+rid+'/jobs', {credentials:'same-origin'});
     const d = await r.json();
@@ -401,6 +424,7 @@ async function showDetail(rid){
   const name = encodeURIComponent(p.pole_no||'电杆');
   const amap = (glng!=null)?('https://uri.amap.com/navigation?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&src=mypage&callnative=1'):'#';
   const baidu = (blng!=null)?('http://api.map.baidu.com/marker?location='+blat.toFixed(6)+','+blng.toFixed(6)+'&title='+name+'&content='+encodeURIComponent(p.desc||'电杆位置')+'&output=html&coord_type=bd09ll&src=webapp'):'#';
+  _galleries = [];  // 每次打开电杆重置图库，避免索引累积错位
   let html = '';
   html += '<div class="kv"><span class="k">电杆编号：</span>'+esc(p.pole_no||'-')+'</div>';
   html += '<div class="kv"><span class="k">供电所：</span>'+esc(p.area||'-')+'</div>';
@@ -412,7 +436,11 @@ async function showDetail(rid){
   jobs.forEach(j=>{
     html += '<div class="job-item"><div class="jt">'+esc(j.ticket||'工作票')+'</div>'
       + '<div class="jm">日期：'+esc(j.date||'-')+'　人员：'+esc(j.worker||'-')+'</div>'
-      + '<div class="jm">隐患：'+esc(j.risk||'-')+'　标示牌：'+esc(j.sign||'-')+'　照片：'+j.photos+' 张</div>'
+      + '<div class="jm">隐患：'+esc(j.risk||'-')+'　标示牌：'+esc(j.sign||'-')+'</div>'
+      + photoGroup('修剪前情况', j.before)
+      + photoGroup('修剪后情况', j.after)
+      + photoGroup('站班会情况', j.station)
+      + photoGroup('附件', j.attach)
       + (j.note?('<div class="jm">备注：'+esc(j.note)+'</div>'):'')
       + '</div>';
   });
@@ -422,6 +450,41 @@ async function showDetail(rid){
 }
 function hideDetail(){ document.getElementById('poleDetail').classList.remove('show'); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  /* ===== 照片缩略图 + 大图查看器 ===== */
+  let _galleries=[];   // 每次 showDetail 重置，存放各组 token 数组
+  function photoGroup(label, arr){
+    if(!arr || !arr.length) return '';
+    const tokens = arr.map(x=>x.file_token).filter(Boolean);
+    if(!tokens.length) return '';
+    const g = _galleries.length; _galleries.push(tokens);
+    let h = '<div class="pg-l">'+esc(label)+'（'+arr.length+'）</div><div class="pg">';
+    tokens.forEach((tok,i)=>{ h += '<img class="pg-i" data-g="'+g+'" data-i="'+i+'" src="/api/photo/'+esc(tok)+'" onerror="this.style.visibility=\'hidden\'">'; });
+    h += '</div>';
+    return h;
+  }
+  let _pvTokens=[], _pvIdx=0;
+  function openPhoto(tokens, idx){
+    if(!tokens || !tokens.length) return;
+    _pvTokens=tokens; _pvIdx=idx||0; renderPhoto();
+    document.getElementById('photoViewer').classList.add('show');
+  }
+  function renderPhoto(){
+    const img=document.getElementById('pv_img');
+    img.src='/api/photo/'+_pvTokens[_pvIdx];
+    img.alt='照片 ' + (_pvIdx+1);
+    document.getElementById('pv_idx').textContent=(_pvIdx+1)+' / '+_pvTokens.length;
+    const multi=_pvTokens.length>1;
+    document.getElementById('pv_prev').style.visibility=multi?'visible':'hidden';
+    document.getElementById('pv_next').style.visibility=multi?'visible':'hidden';
+  }
+  function pvStep(d){ _pvIdx=(_pvIdx+d+_pvTokens.length)%_pvTokens.length; renderPhoto(); }
+  function closePhoto(){ document.getElementById('photoViewer').classList.remove('show'); document.getElementById('pv_img').src=''; }
+  // 事件委托：点击缩略图打开对应图组
+  document.getElementById('pd_body').addEventListener('click', e=>{
+    const t=e.target.closest('.pg-i');
+    if(t && t.dataset.g!=null) openPhoto(_galleries[+t.dataset.g], +t.dataset.i);
+  });
 
 /* 坐标转换：WGS84 -> GCJ02 -> BD09 */
 const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
