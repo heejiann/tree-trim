@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 修剪树枝作业 - 自建录入后端 (纯标准库, 无第三方依赖)
 # 飞书多维表格作为数据库, 本服务持有 tenant_access_token 做写入/读取。
-import os, sys, json, datetime, base64, secrets, re
+import os, sys, json, datetime, base64, secrets, re, time, gzip
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -33,6 +33,11 @@ LOGIN_USER = os.environ.get("LOGIN_USER", "admin")
 LOGIN_PASS = os.environ.get("LOGIN_PASS", "admin123")
 SESSIONS = {}  # session_id -> 用户名（内存会话，重启后失效，需重新登录）
 
+# 和风天气（台风预警图层）：仅后端持有 KEY，前端经本服务代理访问
+QWEATHER_HOST = os.environ.get("QWEATHER_HOST", "mu7jpk58te.re.qweatherapi.com")
+QWEATHER_KEY = os.environ.get("QWEATHER_KEY", "")
+_TYPHOON_CACHE = {"ts": 0.0, "data": None}
+
 _token = None
 _fmap = {}
 
@@ -51,6 +56,39 @@ def api(method, path, body=None, token=None):
             return e.code, json.loads(e.read().decode())
         except Exception:
             return e.code, {"error": str(e)}
+
+
+def _num(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+
+def qweather_get(path, params=None):
+    """访问和风天气 API（自定义主机 + X-QW-Api-Key 鉴权）。和风默认 Gzip 压缩，需解压。"""
+    qs = urllib.parse.urlencode(params or {})
+    url = "https://" + QWEATHER_HOST + path + (("?" + qs) if qs else "")
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("X-QW-Api-Key", QWEATHER_KEY)
+    req.add_header("Accept-Encoding", "gzip")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, _decode_qw(r)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, _decode_qw(e)
+        except Exception:
+            return e.code, {"code": str(e.code)}
+    except Exception as e:
+        return 0, {"code": "0", "error": str(e)}
+
+
+def _decode_qw(resp):
+    raw = resp.read()
+    if resp.headers.get("Content-Encoding") == "gzip":
+        raw = gzip.decompress(raw)
+    return json.loads(raw.decode())
 
 
 def get_token():
@@ -253,6 +291,46 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _typhoon(self):
+        """代理和风天气台风数据：活跃台风列表→各自眼位/路径/风圈，10分钟缓存。"""
+        if not QWEATHER_KEY:
+            self._send(200, {"ok": False, "reason": "no_key",
+                             "msg": "服务端未配置和风天气 API KEY（QWEATHER_KEY）"})
+            return
+        now = time.time()
+        if _TYPHOON_CACHE["data"] is not None and now - _TYPHOON_CACHE["ts"] < 600:
+            self._send(200, _TYPHOON_CACHE["data"])
+            return
+        year = datetime.date.today().year
+        s, o = qweather_get("/v7/tropical/storm-list", {"basin": "NP", "year": year})
+        active = []
+        if o.get("code") == "200":
+            for st in o.get("storm", []):
+                if str(st.get("isActive")) in ("1", "2"):
+                    active.append(st)
+        storms = []
+        for st in active[:5]:
+            sid = st.get("id")
+            item = {"id": sid, "name": st.get("name"), "track": [], "forecast": [], "now": None}
+            s2, o2 = qweather_get("/v7/tropical/storm-track", {"stormid": sid})
+            if o2.get("code") == "200":
+                nw = o2.get("now") or {}
+                item["now"] = {"lat": _num(nw.get("lat")), "lng": _num(nw.get("lon")),
+                               "type": nw.get("type"), "pressure": nw.get("pressure"),
+                               "windSpeed": nw.get("windSpeed"), "windRadius30": nw.get("windRadius30")}
+                for p in o2.get("track", []):
+                    item["track"].append({"lat": _num(p.get("lat")), "lng": _num(p.get("lon")), "time": p.get("time")})
+            s3, o3 = qweather_get("/v7/tropical/storm-forecast", {"stormid": sid})
+            if o3.get("code") == "200":
+                for p in o3.get("forecast", []):
+                    item["forecast"].append({"lat": _num(p.get("lat")), "lng": _num(p.get("lon")), "fxTime": p.get("fxTime")})
+            storms.append(item)
+        data = {"ok": True, "year": year, "storms": storms,
+                "updateTime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
+        _TYPHOON_CACHE["ts"] = now
+        _TYPHOON_CACHE["data"] = data
+        self._send(200, data)
+
     def do_GET(self):
         u = urllib.parse.urlparse(self._path())
         # 公开：静态资源、首页、健康检查
@@ -370,6 +448,9 @@ class H(BaseHTTPRequestHandler):
         m = re.match(r"^/api/photo/([\w.\-]+)$", u.path)
         if m:
             self._photo(m.group(1))
+            return
+        if u.path == "/api/weather/typhoon":
+            self._typhoon()
             return
         self._send(404, {"error": "not found"})
 

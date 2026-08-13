@@ -68,6 +68,8 @@
   input,select,textarea{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;
     font-size:15px;background:#fff;color:var(--ink);outline:none}
   input:focus,select:focus,textarea:focus{border-color:var(--brand)}
+  input[type="date"]{-webkit-appearance:none;appearance:none;min-height:42px;height:42px;padding:11px 12px;font-size:15px;line-height:normal;text-align:left}
+  .pole-red-ic{width:16px;height:16px;border-radius:50%;background:#e74c3c;border:2px solid #fff;box-shadow:0 0 0 3px rgba(231,76,60,.5)}
   textarea{resize:vertical;min-height:64px}
   .row{display:flex;gap:10px}.row>*{flex:1}
   .pole{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);
@@ -79,6 +81,7 @@
   .link{color:var(--brand2);font-size:13px;cursor:pointer;margin-top:8px;display:inline-block}
   .locline{font-size:13px;color:var(--mut);margin-top:8px}
   .step{font-size:12px;color:var(--brand);font-weight:600;margin-bottom:4px}
+  .sub-t{font-size:12px;color:var(--mut);margin:12px 0 2px}
 
   /* 地图管理 */
   /* 缩小地图叠加层文字（约原 2/3；瓦片内路名/POI 文字是图片，无法调） */
@@ -104,6 +107,14 @@
   .kv{margin:2px 0;color:var(--ink)}
   .kv .k{color:var(--mut)}
   .nav-row{display:flex;gap:8px;margin:10px 0}
+  #typhoonCtrl{position:absolute;bottom:20px;right:12px;z-index:1100;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+  #typhoonCtrl button{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:20px;
+    padding:8px 14px;font-size:14px;font-weight:600;color:#2c3e50;box-shadow:0 2px 8px rgba(0,0,0,.18);cursor:pointer}
+  #typhoonCtrl button.on{background:#c0392b;color:#fff;border-color:#c0392b}
+  #lineBtn.on{background:#2c7be5;color:#fff;border-color:#2c7be5}
+  #typhoonBanner{position:absolute;top:64px;left:12px;right:12px;z-index:1150;background:#c0392b;color:#fff;
+    border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.45;box-shadow:0 2px 10px rgba(0,0,0,.25);max-width:calc(100% - 24px)}
+  #typhoonBanner b{font-size:14px}
   .nav-row a{flex:1;text-align:center;text-decoration:none;color:#fff;border-radius:10px;padding:10px;font-size:14px;font-weight:600}
   .nav-row .amap{background:#0f6e56}.nav-row .baidu{background:#1a73e8}
   .job-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}
@@ -184,6 +195,12 @@
         <div class="ph"><b id="pd_title">电杆详情</b><span class="x" onclick="hideDetail()">×</span></div>
         <div class="pb" id="pd_body"></div>
       </div>
+      <div id="typhoonCtrl">
+        <button id="tyBtn" onclick="toggleTyphoon()">🌀 台风图层</button>
+        <button id="lineBtn" onclick="toggleLine()">🔗 线路连线</button>
+        <button id="locBtn" onclick="locateMe()">📍 我的位置</button>
+      </div>
+      <div id="typhoonBanner" class="hidden"></div>
     </div>
 
     <!-- 板块2：作业记录（原录入端） -->
@@ -195,8 +212,12 @@
             <input id="q" placeholder="输入电杆编号查找" onkeydown="if(event.key==='Enter')searchPoles()">
             <button class="btn-sm" style="flex:0 0 88px" onclick="searchPoles()">搜索</button>
           </div>
-          <div id="poleList"></div>
+          <div id="recentWrap" class="hidden">
+            <div class="sub-t">最近选择（最多 4 个，点一下直接选）</div>
+            <div id="recentPoles"></div>
+          </div>
           <span class="link" onclick="showNewPole()">找不到？点此新建电杆 →</span>
+          <div id="poleList"></div>
         </div>
 
         <div class="card hidden" id="newPoleCard">
@@ -286,7 +307,7 @@
 <script src="/static/leaflet/leaflet.js"></script>
 <script>
 /* ===== 通用 ===== */
-function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+function toast(msg,dur){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),dur||2200);}
 const AREA_TREE = {
   "佛山供电局": {
     "禅城供电局": [], "南海供电局": ["大沥供电所","里水供电所","九江供电所","西樵供电所","罗村供电所","平洲供电所","狮山供电所"],
@@ -366,13 +387,14 @@ function showPage(page, silent){
     backBtn.classList.remove('hidden');
     topbar.classList.add('sm');
     sub.textContent = '作业记录 · 搜杆 / 建杆 / 录作业';
-    searchPoles();
+    document.getElementById('poleList').innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">输入电杆编号后点「搜索」</div>';
+    renderRecent();
   }
   if(!silent) hideDetail();
 }
 
 /* ===== 地图管理 ===== */
-let _mapAdmin=null, _layer=null, _allPoles=[], _poleById={}, _markers={};
+let _mapAdmin=null, _layer=null, _allPoles=[], _poleById={}, _markers={}, _lineLayer=null, _lineOn=false;
 function initAdminMap(){
   _mapAdmin = L.map('mapAdmin', {zoomControl:true}).setView([23.13,113.26], 11);
   L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'© 高德地图'}).addTo(_mapAdmin);
@@ -398,7 +420,7 @@ function filterMap(){
   let shown=0;
   list.forEach(p=>{
     if(p.lat==null || p.lng==null) return;
-    const m = L.marker([p.lat, p.lng]).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
+    const m = L.marker([p.lat, p.lng], {icon:_poleDefIcon}).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
     m.on('click', ()=>showDetail(p.record_id));
     _layer.addLayer(m);
     _markers[p.record_id]=m;
@@ -520,23 +542,49 @@ function fillArea3(){
   if(list.length===0){const n=document.createElement('option');n.value="无";n.textContent="无";s3.appendChild(n);s3.value="无";}
   else if(list.includes("乐平供电所")) s3.value="乐平供电所";
 }
+const _RECENT_KEY='recentPoles';
+function getRecent(){ try{return JSON.parse(localStorage.getItem(_RECENT_KEY)||'[]')}catch(e){return[]} }
+function pushRecent(rid,no){
+  let a=getRecent().filter(x=>x.rid!==rid);
+  a.unshift({rid,no});
+  if(a.length>4) a=a.slice(0,4);
+  try{localStorage.setItem(_RECENT_KEY, JSON.stringify(a));}catch(e){}
+}
+function renderRecent(){
+  const wrap=document.getElementById('recentWrap');
+  const box=document.getElementById('recentPoles');
+  const list=getRecent();
+  box.innerHTML='';
+  if(!list.length){ wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  list.forEach(p=>{
+    const el=document.createElement('div'); el.className='pole';
+    el.innerHTML=`<div><div class="no">${esc(p.no)}</div></div><div class="d">选择 ›</div>`;
+    el.onclick=()=>selectPole(p.rid,p.no);
+    box.appendChild(el);
+  });
+}
 async function searchPoles(){
   const q=document.getElementById('q').value.trim();
+  const box=document.getElementById('poleList'); box.innerHTML='';
+  if(!q){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">请输入电杆编号再搜索</div>'; return; }
   const r=await fetch('/api/poles?q='+encodeURIComponent(q), {credentials:'same-origin'});
   const d=await r.json();
-  const box=document.getElementById('poleList'); box.innerHTML='';
   if(!d.items||!d.items.length){box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">无匹配电杆</div>';return;}
-  d.items.forEach(p=>{
+  const MAX=50;
+  d.items.slice(0,MAX).forEach(p=>{
     const el=document.createElement('div'); el.className='pole';
     el.innerHTML=`<div><div class="no">${esc(p.pole_no)}</div><div class="d">${esc(p.desc||'(无描述)')}</div></div><div class="d">选择 ›</div>`;
     el.onclick=()=>selectPole(p.record_id,p.pole_no);
     box.appendChild(el);
   });
+  if(d.items.length>MAX) box.insertAdjacentHTML('beforeend','<div style="color:#8a8f99;font-size:12px;margin-top:8px">仅显示前 '+MAX+' 个，请输入更精确编号（如 #03 杆）</div>');
 }
 function showNewPole(){hide('searchCard');show('newPoleCard');initArea();fillArea2();fillArea3();}
 function backToSearch(){hide('newPoleCard');show('searchCard');}
 function selectPole(rid,no){
   window._rid=rid;
+  pushRecent(rid,no);
   document.getElementById('curPole').textContent=no;
   hide('searchCard');hide('newPoleCard');show('jobCard');
   if(!document.getElementById('j_date').value) document.getElementById('j_date').value=new Date().toISOString().slice(0,10);
@@ -550,6 +598,18 @@ function openMap(){
   L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'© 高德地图'}).addTo(_map);
   _map.on('click',e=>{ if(_marker)_marker.setLatLng(e.latlng);else _marker=L.marker(e.latlng).addTo(_map); _pick={lat:e.latlng.lat,lng:e.latlng.lng}; });
   setTimeout(()=>_map.invalidateSize(),200);
+  // 默认定位到当前位置（若用户授权）
+  if(!window.isSecureContext){
+    toast('当前为局域网HTTP访问，浏览器禁用定位；请用HTTPS地址或线上版本',3500);
+  } else if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(function(pos){
+      const la=pos.coords.latitude, ln=pos.coords.longitude;
+      _map.setView([la,ln],16);
+      if(_marker)_marker.setLatLng([la,ln]); else _marker=L.marker([la,ln]).addTo(_map);
+      _pick={lat:la,lng:ln};
+      const ll=document.getElementById('locline'); if(ll) ll.textContent='已默认选当前位置：'+la.toFixed(6)+', '+ln.toFixed(6);
+    }, function(err){ toast('默认定位失败：'+(err&&err.message?err.message:'需HTTPS或允许定位权限'),3500); }, {enableHighAccuracy:true,timeout:8000,maximumAge:60000});
+  }
 }
 function closeMap(){document.getElementById('mapMask').classList.remove('show');if(_map){_map.remove();_map=null;_marker=null;}}
 function confirmMap(){
@@ -557,6 +617,159 @@ function confirmMap(){
   window._lat=_pick.lat;window._lng=_pick.lng;
   document.getElementById('locline').textContent='已选定位：'+_pick.lat.toFixed(6)+', '+_pick.lng.toFixed(6);
   closeMap();
+}
+/* ============ 台风预警图层 ============ */
+let _tyLayer=null,_tyOn=false,_tyTimer=null;
+function towerHtml(color, bg){
+  return '<svg viewBox="0 0 32 40" width="30" height="38" xmlns="http://www.w3.org/2000/svg">'
+    +'<g fill="none" stroke="'+color+'" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    +'<polygon points="16,3 9,37 23,37" fill="'+bg+'"/>'
+    +'<line x1="4" y1="13" x2="28" y2="13"/><line x1="7" y1="23" x2="25" y2="23"/><line x1="6" y1="32" x2="26" y2="32"/>'
+    +'<line x1="16" y1="3" x2="9" y2="37"/><line x1="16" y1="3" x2="23" y2="37"/><line x1="12" y1="20" x2="20" y2="20"/>'
+    +'</g><circle cx="16" cy="3" r="1.6" fill="'+color+'"/></svg>';
+}
+function makeTowerIcon(color, bg){
+  return L.divIcon({html:towerHtml(color,bg), className:'tower-ico', iconSize:[32,40], iconAnchor:[16,38], popupAnchor:[0,-34]});
+}
+function pinHtml(color){
+  return '<svg viewBox="0 0 24 32" width="24" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z" fill="'+color+'"/><circle cx="12" cy="12" r="4.5" fill="#fff"/></svg>';
+}
+const _meIcon=L.divIcon({html:pinHtml('#2c7be5'), className:'me-ico', iconSize:[24,32], iconAnchor:[12,32], popupAnchor:[0,-28]});
+const _poleDefIcon=makeTowerIcon('#2c7be5','rgba(44,123,229,.12)');
+const _poleRedIcon=makeTowerIcon('#e74c3c','rgba(231,76,60,.40)');
+let _meMarker=null;
+function locateMe(){
+  if(!window.isSecureContext){ toast('当前为HTTP局域网访问，浏览器禁用了定位；请用HTTPS地址或线上版本',3500); return; }
+  if(!navigator.geolocation){ toast('当前设备不支持定位'); return; }
+  toast('正在获取当前位置…',1500);
+  navigator.geolocation.getCurrentPosition(function(pos){
+    const la=pos.coords.latitude, ln=pos.coords.longitude;
+    if(_mapAdmin){
+      if(_meMarker)_meMarker.setLatLng([la,ln]); else _meMarker=L.marker([la,ln],{icon:_meIcon}).addTo(_mapAdmin);
+      _mapAdmin.flyTo([la,ln],16);
+      _meMarker.bindPopup('📍 我的位置').openPopup();
+    }
+    toast('已定位到你的当前位置',1800);
+  }, function(err){ toast('定位失败：'+(err&&err.message?err.message:'请允许定位权限'),3000); }, {enableHighAccuracy:true,timeout:8000,maximumAge:60000});
+}
+function haversineKm(lat1,lng1,lat2,lng2){
+  const R=6371,toR=d=>d*Math.PI/180;
+  const dLat=toR(lat2-lat1),dLng=toR(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function windRadiusKm(w){
+  if(!w) return 0;
+  const arr=[parseFloat(w.neRadius),parseFloat(w.seRadius),parseFloat(w.swRadius),parseFloat(w.nwRadius)].filter(v=>!isNaN(v)&&v>0);
+  return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0;
+}
+function affectedPoles(lat,lng,rkm){
+  const res=[];
+  if(!(rkm>0)) return res;
+  (_allPoles||[]).forEach(p=>{ if(p.lat==null||p.lng==null) return; if(haversineKm(lat,lng,p.lat,p.lng)<=rkm) res.push(p); });
+  return res;
+}
+function showTyBanner(html){const b=document.getElementById('typhoonBanner');b.innerHTML=html;b.classList.remove('hidden');}
+function hideTyBanner(){document.getElementById('typhoonBanner').classList.add('hidden');}
+function clearTyphoon(){ if(_tyLayer){_mapAdmin.removeLayer(_tyLayer);_tyLayer=null;} hideTyBanner(); Object.values(_markers||{}).forEach(m=>{ try{ m.setIcon(_poleDefIcon); }catch(e){} }); }
+async function toggleTyphoon(){
+  const btn=document.getElementById('tyBtn');
+  if(_tyOn){ clearTyphoon(); _tyOn=false; btn.classList.remove('on'); btn.textContent='🌀 台风图层'; if(_tyTimer){clearInterval(_tyTimer);_tyTimer=null;} return; }
+  btn.textContent='加载中…';
+  try{
+    const r=await fetch('/api/weather/typhoon',{credentials:'same-origin'});
+    const d=await r.json();
+    if(!d.ok){ toast(d.msg||'台风数据获取失败'); btn.textContent='🌀 台风图层'; return; }
+    if(!d.storms||!d.storms.length){ toast('当前西北太平洋无活跃台风'); btn.textContent='🌀 台风图层'; return; }
+    drawTyphoon(d);
+    _tyOn=true; btn.classList.add('on'); btn.textContent='🌀 关闭台风';
+    _tyTimer=setInterval(async()=>{ try{const r2=await fetch('/api/weather/typhoon',{credentials:'same-origin'});const d2=await r2.json();if(d2.ok)drawTyphoon(d2);}catch(e){} },15*60*1000);
+  }catch(e){ toast('请求台风数据出错'); btn.textContent='🌀 台风图层'; }
+}
+let _linePalette=['#2c7be5','#e67e22','#27ae60','#8e44ad','#16a085','#c0392b','#d35400','#2980b9'];
+function parsePoleLine(no){
+  if(!no) return {line:'未命名', seq:0};
+  const i=no.indexOf('#');
+  if(i<0) return {line:(no||'未命名').trim(), seq:0};
+  const line=no.substring(0,i).trim()||'未命名';
+  const rest=no.substring(i+1);
+  const m=rest.match(/\d+/);
+  const seq=m?parseInt(m[0],10):0;
+  return {line, seq};
+}
+function buildLineLayer(){
+  const groups={};
+  (_allPoles||[]).forEach(p=>{
+    if(p.lat==null||p.lng==null) return;
+    const {line,seq}=parsePoleLine(p.pole_no);
+    (groups[line]=groups[line]||[]).push({p,seq});
+  });
+  const layer=L.layerGroup();
+  const lines=Object.keys(groups);
+  let ci=0, drawn=0;
+  lines.forEach(line=>{
+    const arr=groups[line].sort((a,b)=>a.seq-b.seq);
+    const pts=arr.map(o=>[o.p.lat,o.p.lng]);
+    if(pts.length>=2){
+      const color=_linePalette[ci%_linePalette.length];
+      L.polyline(pts,{color,weight:3.5,opacity:.9,interactive:false}).addTo(layer);
+      ci++; drawn++;
+    }
+  });
+  return {layer, drawn, total:lines.length};
+}
+function toggleLine(){
+  const btn=document.getElementById('lineBtn');
+  if(_lineOn){
+    if(_lineLayer){_mapAdmin.removeLayer(_lineLayer);_lineLayer=null;}
+    _lineOn=false; btn.classList.remove('on'); btn.textContent='🔗 线路连线';
+    return;
+  }
+  if(!_allPoles||!_allPoles.length){ toast('暂无电杆数据，请先在地图页加载'); return; }
+  const res=buildLineLayer();
+  if(res.drawn===0){
+    toast('每条线路需至少2根电杆才能连线；当前每条线路仅1根（测试数据）',3500);
+    return;
+  }
+  res.layer.addTo(_mapAdmin);
+  _lineLayer=res.layer; _lineOn=true; btn.classList.add('on'); btn.textContent='✖ 关闭连线';
+  toast('已按 '+res.drawn+' 条线路连线（共 '+res.total+' 条线路，'+(res.total-res.drawn)+' 条不足2杆跳过）',3200);
+}
+function drawTyphoon(d){
+  clearTyphoon();
+  _tyLayer=L.layerGroup().addTo(_mapAdmin);
+  const affectedAll=[];
+  (d.storms||[]).forEach(st=>{
+    const tpts=(st.track||[]).filter(p=>p.lat!=null&&p.lng!=null).map(p=>[p.lat,p.lng]);
+    if(tpts.length) L.polyline(tpts,{color:'#7f8c8d',weight:2,opacity:.85}).addTo(_tyLayer);
+    const fpts=(st.forecast||[]).filter(p=>p.lat!=null&&p.lng!=null).map(p=>[p.lat,p.lng]);
+    if(fpts.length) L.polyline(fpts,{color:'#e74c3c',weight:2,dashArray:'6 6',opacity:.9}).addTo(_tyLayer);
+    const eye=st.now;
+    if(eye&&eye.lat!=null&&eye.lng!=null){
+      L.circleMarker([eye.lat,eye.lng],{radius:7,color:'#fff',weight:2,fillColor:'#e74c3c',fillOpacity:1})
+        .bindTooltip('🌀 '+st.name+' '+(eye.windSpeed||'?')+'m/s',{permanent:true,direction:'top'})
+        .addTo(_tyLayer);
+      const rkm=windRadiusKm(eye.windRadius30);
+      if(rkm>0) L.circle([eye.lat,eye.lng],{radius:rkm*1000,color:'#e74c3c',weight:1,fillColor:'#e74c3c',fillOpacity:.12,opacity:.6}).addTo(_tyLayer);
+      const aff=affectedPoles(eye.lat,eye.lng,rkm);
+      if(aff.length) affectedAll.push({name:st.name,poles:aff});
+    }
+  });
+  if(affectedAll.length){
+    let html='⚠️ <b>台风预警</b>：';
+    affectedAll.forEach(a=>{ html+='<br>'+a.name+' 风圈覆盖 <b>'+a.poles.length+'</b> 根电杆：'+a.poles.slice(0,8).map(p=>p.pole_no).join('、')+(a.poles.length>8?'…':''); a.poles.forEach(p=>{ const m=_markers[p.record_id]; if(m) m.setIcon(_poleRedIcon); }); });
+    showTyBanner(html);
+  } else {
+    // 台风在远海时整层不在视野内，自动飞到台风眼并提示距离
+    const eyes=(d.storms||[]).map(s=>s.now).filter(e=>e&&e.lat!=null&&e.lng!=null);
+    if(eyes.length){
+      const e0=eyes[0], el=[e0.lat,e0.lng];
+      if(!_mapAdmin.getBounds().contains(el)) _mapAdmin.flyTo(el, 5);
+      let minD=1e9, near='';
+      (window._allPoles||[]).forEach(p=>{ if(p.lat!=null&&p.lng!=null){ const dd=haversineKm(p.lat,p.lng,e0.lat,e0.lng); if(dd<minD){minD=dd;near=p.pole_no;} } });
+      toast('🌀 '+(d.storms[0].name||'台风')+' 位于远海('+e0.lat.toFixed(1)+'N,'+e0.lng.toFixed(1)+'E)，距最近电杆「'+(near||'?')+'」约 '+Math.round(minD)+'km', 3500);
+    }
+  }
 }
 async function submitNewPole(){
   const no=document.getElementById('np_no').value.trim();
@@ -593,7 +806,7 @@ async function submitJob(){
 }
 function resetAll(){
   hide('jobCard');hide('newPoleCard');show('searchCard');
-  document.getElementById('poleList').innerHTML='';document.getElementById('q').value='';
+  document.getElementById('poleList').innerHTML='';document.getElementById('q').value='';renderRecent();
   document.getElementById('locline').textContent='未选择定位';
   ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   ['j_risk','j_sign'].forEach(id=>document.getElementById(id).selectedIndex=0);
