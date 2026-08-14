@@ -444,7 +444,7 @@ async function showDetail(rid){
   const [glng,glat] = (p.lng!=null)?wgs2gcj(p.lng,p.lat):[p.lng,p.lat];
   const [blng,blat] = (glng!=null)?gcj2bd(glng,glat):[p.lng,p.lat];
   const name = encodeURIComponent(p.pole_no||'电杆');
-  const amap = (glng!=null)?('https://uri.amap.com/navigation?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&src=mypage&callnative=1'):'#';
+  const amap = (glng!=null)?('https://uri.amap.com/navigation?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&src=mypage&callnative=0&coordinate=gaode'):'#';
   const baidu = (blng!=null)?('http://api.map.baidu.com/marker?location='+blat.toFixed(6)+','+blng.toFixed(6)+'&title='+name+'&content='+encodeURIComponent(p.desc||'电杆位置')+'&output=html&coord_type=bd09ll&src=webapp'):'#';
   _galleries = [];  // 每次打开电杆重置图库，避免索引累积错位
   let html = '';
