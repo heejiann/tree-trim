@@ -7,13 +7,14 @@
 <link rel="stylesheet" href="/static/leaflet/leaflet.css"/>
 <style>
   :root{
-    --bg:#f5f7fa; --card:#ffffff; --ink:#1f2329; --mut:#8a8f99;
-    --line:#e5e6eb; --brand:#0f6e56; --brand2:#185fa5; --warn:#ba7517; --ok:#3b6d11;
+    --bg:#f4f5f7; --card:#ffffff; --ink:#2b2f33; --mut:#8a8f99;
+    --line:#e5e6eb; --brand:#E8730C; --brand2:#5B6571; --warn:#ba7517; --ok:#3b6d11;
+    --gray:#4B5158;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
     background:var(--bg);color:var(--ink);font-size:15px;line-height:1.55;overflow:hidden}
-  header{background:linear-gradient(135deg,#0f6e56,#185fa5);color:#fff;height:68px;padding:0 12px;
+  header{background:linear-gradient(135deg,#4B5158,#E8730C);color:#fff;height:68px;padding:0 12px;
     display:flex;align-items:center;justify-content:space-between;gap:10px}
   header .ttl{flex:1;min-width:0;text-align:center}
   header .ttl h1{margin:0;font-size:20px;line-height:1.3;font-weight:600;white-space:nowrap}
@@ -33,7 +34,7 @@
 
   /* 登录页 —— 固定全屏覆盖，未登录时什么都看不到 */
   #loginView{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;
-    background:linear-gradient(135deg,#0f6e56,#185fa5)}
+    background:linear-gradient(135deg,#4B5158,#E8730C)}
   .login-card{width:340px;max-width:90vw;background:#fff;border-radius:18px;padding:30px 26px;
     box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:center}
   .login-card img{max-width:180px;width:auto;height:auto;max-height:90px;margin-bottom:16px}
@@ -76,7 +77,7 @@
     border-radius:10px;padding:12px;margin-top:8px;cursor:pointer}
   .pole:hover{border-color:var(--brand)}
   .pole .no{font-weight:600}.pole .d{font-size:12px;color:var(--mut)}
-  .tag{display:inline-block;background:#e1f5ee;color:var(--brand);font-size:12px;padding:2px 8px;border-radius:6px;margin-left:8px}
+  .tag{display:inline-block;background:rgba(232,115,12,.12);color:var(--brand);font-size:12px;padding:2px 8px;border-radius:6px;margin-left:8px}
   hr{border:none;border-top:1px dashed var(--line);margin:14px 0}
   .link{color:var(--brand2);font-size:13px;cursor:pointer;margin-top:8px;display:inline-block}
   .locline{font-size:13px;color:var(--mut);margin-top:8px}
@@ -86,17 +87,22 @@
   /* 地图管理 */
   /* 缩小地图叠加层文字（约原 2/3；瓦片内路名/POI 文字是图片，无法调） */
   .leaflet-control-attribution{font-size:8px !important;padding:1px 5px !important}
-  .leaflet-control-zoom{margin-top:72px !important}
+  .leaflet-control-zoom{margin-top:104px !important}
   .leaflet-control-zoom a{width:26px;height:26px;line-height:24px;font-size:15px}
   .leaflet-popup-content{font-size:13px;margin:10px 12px}
   .leaflet-popup-content b{font-size:14px}
   .search-bar{position:absolute;top:12px;left:12px;right:12px;z-index:1000;background:#fff;
-    border-radius:12px;padding:8px 10px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.15)}
-  .search-bar input{border:none;padding:8px 4px;margin:0;font-size:15px}
-  .search-bar input:focus{border:none}
-  .search-bar .cnt{font-size:12px;color:var(--mut);white-space:nowrap}
+    border-radius:12px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+  .sb-tabs{display:flex;gap:6px;margin-bottom:8px}
+  .sb-tab{flex:1;text-align:center;font-size:13px;padding:6px 2px;border-radius:8px;background:#eef1f5;color:var(--mut);cursor:pointer;white-space:nowrap}
+  .sb-tab.on{background:var(--brand);color:#fff}
+  .sb-body{display:flex;gap:8px;align-items:center}
+  .sb-input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:15px;background:#fff;color:var(--ink);margin:0;min-width:0;width:auto}
+  .sb-input:focus{border-color:var(--brand)}
+  .sb-reset{flex:0 0 auto;background:#eef1f5;color:var(--ink);border:none;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;font-weight:600}
+  .cnt{font-size:12px;color:var(--mut);white-space:nowrap}
   #mapAdmin{position:absolute;inset:0;background:#e8eaed}
-  #poleDetail{position:absolute;right:12px;top:74px;bottom:12px;width:340px;max-width:calc(100% - 24px);
+  #poleDetail{position:absolute;right:12px;top:116px;bottom:12px;width:340px;max-width:calc(100% - 24px);
     background:#fff;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.22);z-index:1000;
     display:none;flex-direction:column;overflow:hidden}
   #poleDetail.show{display:flex}
@@ -111,12 +117,12 @@
   #typhoonCtrl button{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:20px;
     padding:8px 14px;font-size:14px;font-weight:600;color:#2c3e50;box-shadow:0 2px 8px rgba(0,0,0,.18);cursor:pointer}
   #typhoonCtrl button.on{background:#c0392b;color:#fff;border-color:#c0392b}
-  #lineBtn.on{background:#2c7be5;color:#fff;border-color:#2c7be5}
-  #typhoonBanner{position:absolute;top:64px;left:12px;right:12px;z-index:1150;background:#c0392b;color:#fff;
+  #lineBtn.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  #typhoonBanner{position:absolute;top:108px;left:12px;right:12px;z-index:1150;background:#c0392b;color:#fff;
     border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.45;box-shadow:0 2px 10px rgba(0,0,0,.25);max-width:calc(100% - 24px)}
   #typhoonBanner b{font-size:14px}
   .nav-row a{flex:1;text-align:center;text-decoration:none;color:#fff;border-radius:10px;padding:10px;font-size:14px;font-weight:600}
-  .nav-row .amap{background:#0f6e56}.nav-row .baidu{background:#1a73e8}
+  .nav-row .amap{background:var(--brand)}.nav-row .baidu{background:#1a73e8}
   .job-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}
   .job-item .jt{font-weight:600;color:var(--brand2)}
   .job-item .jm{font-size:12px;color:var(--mut);margin-top:3px}
@@ -186,9 +192,23 @@
 
     <!-- 板块1：地图管理 -->
     <div id="mapSection" class="hidden">
-      <div class="search-bar">
-        <input id="mapSearch" placeholder="搜索电杆编号…" oninput="filterMap()" style="flex:1">
-        <span class="cnt" id="mapCnt"></span>
+      <div class="search-bar" id="mapSearchBar">
+        <div class="sb-tabs">
+          <span class="sb-tab" data-mode="station" onclick="setSearchMode('station')">供电所</span>
+          <span class="sb-tab" data-mode="bureau" onclick="setSearchMode('bureau')">供电局</span>
+          <span class="sb-tab" data-mode="line" onclick="setSearchMode('line')">线路名</span>
+          <span class="sb-tab" data-mode="pole" onclick="setSearchMode('pole')">电杆名称</span>
+        </div>
+        <div class="sb-body">
+          <select id="selStation" class="sb-input" style="display:none" onchange="applySearch()"></select>
+          <select id="selBureau" class="sb-input" style="display:none" onchange="applySearch()"></select>
+          <input id="selLine" class="sb-input" style="display:none" list="lineList" placeholder="输入或选择线路名" oninput="applySearch()">
+          <input id="selPole" class="sb-input" style="display:none" list="poleListDl" placeholder="输入电杆名称/编号" oninput="applySearch()">
+          <datalist id="lineList"></datalist>
+          <datalist id="poleListDl"></datalist>
+          <button class="sb-reset" onclick="resetSearch()">全部</button>
+          <span class="cnt" id="mapCnt"></span>
+        </div>
       </div>
       <div id="mapAdmin"></div>
       <div id="poleDetail">
@@ -409,16 +429,13 @@ async function loadMapData(){
     _allPoles = d.items || [];
     _poleById = {};
     _allPoles.forEach(p=>_poleById[p.record_id]=p);
-    filterMap();
+    buildSearchOptions();
+    applySearch();
   }catch(e){ toast('加载电杆失败'); }
 }
-function filterMap(){
-  const q = (document.getElementById('mapSearch').value||'').trim().toLowerCase();
-  const list = _allPoles.filter(p=> !q || (p.pole_no||'').toLowerCase().includes(q));
-  _layer.clearLayers();
-  _markers = {};
-  let shown=0;
-  list.forEach(p=>{
+function renderMapPoles(list){
+  _layer.clearLayers(); _markers={}; let shown=0;
+  (list||[]).forEach(p=>{
     if(p.lat==null || p.lng==null) return;
     const m = L.marker([p.lat, p.lng], {icon:_poleDefIcon}).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
     m.on('click', ()=>showDetail(p.record_id));
@@ -427,6 +444,66 @@ function filterMap(){
     shown++;
   });
   document.getElementById('mapCnt').textContent = shown + ' / ' + _allPoles.length + ' 杆';
+}
+function fitToPoles(list){
+  const pts = (list||[]).filter(p=>p.lat!=null&&p.lng!=null).map(p=>[p.lat,p.lng]);
+  if(!pts.length) return;
+  if(pts.length===1) _mapAdmin.setView(pts[0], 17);
+  else _mapAdmin.fitBounds(pts, {padding:[60,60], maxZoom:15});
+}
+
+/* ===== 地图分类搜索：供电所 / 供电局 / 线路名 / 电杆名称 ===== */
+let _searchMode='all', _filteredPoles=null;
+const MODE_INPUT={'station':'selStation','bureau':'selBureau','line':'selLine','pole':'selPole'};
+function buildSearchOptions(){
+  const stations=new Set(), bureaus=new Set();
+  (_allPoles||[]).forEach(p=>{
+    const segs=(p.area||'').split(' / ').map(s=>s.trim()).filter(Boolean);
+    if(segs.length){ stations.add(segs[segs.length-1]); for(let i=0;i<segs.length-1;i++) bureaus.add(segs[i]); }
+    else if(p.area) stations.add(p.area.trim());
+  });
+  Object.keys(AREA_TREE).forEach(b=>{ bureaus.add(b); Object.keys(AREA_TREE[b]||{}).forEach(d=>{ bureaus.add(d); (AREA_TREE[b][d]||[]).forEach(s=>stations.add(s)); }); });
+  const ss=[...stations].sort(), bs=[...bureaus].sort();
+  const selS=document.getElementById('selStation'), selB=document.getElementById('selBureau');
+  selS.innerHTML='<option value="">— 全部供电所 —</option>'+ss.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+  selB.innerHTML='<option value="">— 全部供电局 —</option>'+bs.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+  const lines=new Set(), polesn=new Set();
+  (_allPoles||[]).forEach(p=>{ const ln=parsePoleLine(p.pole_no).line; if(ln&&ln!=='未命名') lines.add(ln); if(p.pole_no) polesn.add(p.pole_no); });
+  document.getElementById('lineList').innerHTML=[...lines].sort().map(l=>'<option value="'+esc(l)+'">').join('');
+  document.getElementById('poleListDl').innerHTML=[...polesn].sort().map(n=>'<option value="'+esc(n)+'">').join('');
+}
+function setSearchMode(mode){
+  _searchMode=mode;
+  document.querySelectorAll('.sb-tab').forEach(t=>t.classList.toggle('on', t.dataset.mode===mode));
+  Object.keys(MODE_INPUT).forEach(m=>{ document.getElementById(MODE_INPUT[m]).style.display = (m===mode)?'block':'none'; });
+  applySearch();
+}
+function applySearch(){
+  if(!_allPoles.length) return;
+  let list=_allPoles;
+  if(_searchMode==='station'){ const v=document.getElementById('selStation').value; if(v) list=_allPoles.filter(p=>(p.area||'').includes(v)); }
+  else if(_searchMode==='bureau'){ const v=document.getElementById('selBureau').value; if(v) list=_allPoles.filter(p=>(p.area||'').includes(v)); }
+  else if(_searchMode==='line'){ const v=document.getElementById('selLine').value.trim().toLowerCase(); if(v) list=_allPoles.filter(p=>parsePoleLine(p.pole_no).line.toLowerCase().includes(v)); }
+  else if(_searchMode==='pole'){ const v=document.getElementById('selPole').value.trim().toLowerCase(); if(v) list=_allPoles.filter(p=>(p.pole_no||'').toLowerCase().includes(v)); }
+  _filteredPoles=list;
+  renderMapPoles(list);
+  fitToPoles(list);
+  refreshLineIfOn();
+}
+function resetSearch(){
+  _searchMode='all';
+  Object.keys(MODE_INPUT).forEach(m=>{ const e=document.getElementById(MODE_INPUT[m]); e.value=''; e.style.display='none'; });
+  document.querySelectorAll('.sb-tab').forEach(t=>t.classList.remove('on'));
+  _filteredPoles=_allPoles;
+  renderMapPoles(_allPoles);
+  refreshLineIfOn();
+}
+function refreshLineIfOn(){
+  if(_lineOn){
+    if(_lineLayer){_mapAdmin.removeLayer(_lineLayer);_lineLayer=null;}
+    const res=buildLineLayer(_filteredPoles||_allPoles);
+    if(res.drawn>0){ res.layer.addTo(_mapAdmin); _lineLayer=res.layer; }
+  }
 }
 async function showDetail(rid){
   const p = _poleById[rid];
@@ -634,8 +711,8 @@ function makeTowerIcon(color, bg){
 function pinHtml(color){
   return '<svg viewBox="0 0 24 32" width="24" height="32" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z" fill="'+color+'"/><circle cx="12" cy="12" r="4.5" fill="#fff"/></svg>';
 }
-const _meIcon=L.divIcon({html:pinHtml('#2c7be5'), className:'me-ico', iconSize:[24,32], iconAnchor:[12,32], popupAnchor:[0,-28]});
-const _poleDefIcon=makeTowerIcon('#2c7be5','rgba(44,123,229,.12)');
+const _meIcon=L.divIcon({html:pinHtml('#4B5158'), className:'me-ico', iconSize:[24,32], iconAnchor:[12,32], popupAnchor:[0,-28]});
+const _poleDefIcon=makeTowerIcon('#E8730C','rgba(232,115,12,.12)');
 const _poleRedIcon=makeTowerIcon('#e74c3c','rgba(231,76,60,.40)');
 let _meMarker=null;
 function locateMe(){
@@ -697,9 +774,10 @@ function parsePoleLine(no){
   const seq=m?parseInt(m[0],10):0;
   return {line, seq};
 }
-function buildLineLayer(){
+function buildLineLayer(poles){
+  poles=poles||_allPoles;
   const groups={};
-  (_allPoles||[]).forEach(p=>{
+  (poles||[]).forEach(p=>{
     if(p.lat==null||p.lng==null) return;
     const {line,seq}=parsePoleLine(p.pole_no);
     (groups[line]=groups[line]||[]).push({p,seq});
@@ -725,8 +803,9 @@ function toggleLine(){
     _lineOn=false; btn.classList.remove('on'); btn.textContent='🔗 线路连线';
     return;
   }
-  if(!_allPoles||!_allPoles.length){ toast('暂无电杆数据，请先在地图页加载'); return; }
-  const res=buildLineLayer();
+  const src=_filteredPoles||_allPoles;
+  if(!src||!src.length){ toast('当前筛选无电杆数据，请先缩小搜索范围'); return; }
+  const res=buildLineLayer(src);
   if(res.drawn===0){
     toast('每条线路需至少2根电杆才能连线；当前每条线路仅1根（测试数据）',3500);
     return;
