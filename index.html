@@ -554,7 +554,8 @@ async function showDetail(rid){
   const [glng,glat] = (p.lng!=null)?wgs2gcj(p.lng,p.lat):[p.lng,p.lat];
   const [blng,blat] = (glng!=null)?gcj2bd(glng,glat):[p.lng,p.lat];
   const name = encodeURIComponent(p.pole_no||'电杆');
-  const amap = (glng!=null)?('https://uri.amap.com/navigation?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&src=mypage&callnative=0&coordinate=gaode'):'#';
+  // 高德改用 www.amap.com/dir 网页路线规划：无需 key，且 to=经度,纬度 能直接把电杆设为终点并出路线；uri.amap.com 在 iPhone/微信常被拦、mo.amap.com/navi 又强制要求 key 导致只打开不设终点
+  const amap = (glng!=null)?('https://www.amap.com/dir?to='+glng.toFixed(6)+','+glat.toFixed(6)+','+name+'&mode=car&dev=0'):'#';
   const baidu = (blng!=null)?('http://api.map.baidu.com/marker?location='+blat.toFixed(6)+','+blng.toFixed(6)+'&title='+name+'&content='+encodeURIComponent(p.desc||'电杆位置')+'&output=html&coord_type=bd09ll&src=webapp'):'#';
   _galleries = [];  // 每次打开电杆重置图库，避免索引累积错位
   let html = '';
@@ -562,7 +563,8 @@ async function showDetail(rid){
   html += '<div class="kv"><span class="k">供电所：</span>'+esc(p.area||'-')+'</div>';
   html += '<div class="kv"><span class="k">状态：</span>'+esc(p.status||'-')+'</div>';
   html += '<div class="kv"><span class="k">描述：</span>'+esc(p.desc||'-')+'</div>';
-  html += '<div class="nav-row"><a class="amap" href="'+amap+'" target="_blank">高德导航</a><a class="baidu" href="'+baidu+'" target="_blank">百度导航</a></div>';
+  var _amapClick = (glng!=null) ? (' onclick="openAmap('+glng+','+glat+',\''+String(p.pole_no||'').replace(/'/g,"\\'")+'\')"') : '';
+  html += '<div class="nav-row"><a class="amap" href="javascript:void(0)"'+_amapClick+'>高德导航</a><a class="baidu" href="'+baidu+'" target="_blank">百度导航</a></div>';
   html += '<div style="font-weight:600;margin:10px 0 4px">作业记录（'+jobs.length+' 条）</div>';
   if(!jobs.length) html += '<div style="color:#8a8f99">暂无作业记录</div>';
   jobs.forEach(j=>{
@@ -623,6 +625,23 @@ const PI=Math.PI, A=6378245.0, EE=0.00669342162296594323;
 function outOfChina(lng,lat){return !(lng>73.66&&lng<135.05&&lat>3.86&&lat<53.55);}
 function tLat(lng,lat){let r=-100+2*lng+3*lat+0.2*lat*lat+0.1*lng*lat+0.2*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*PI)+20*Math.sin(2*lng*PI))*2/3;r+=(20*Math.sin(lat*PI)+40*Math.sin(lat/3*PI))*2/3;r+=(160*Math.sin(lat/12*PI)+320*Math.sin(lat*PI/30))*2/3;return r;}
 function tLng(lng,lat){let r=300+lng+2*lat+0.1*lng*lng+0.1*lng*lat+0.1*Math.sqrt(Math.abs(lng));r+=(20*Math.sin(6*lng*PI)+20*Math.sin(2*lng*PI))*2/3;r+=(20*Math.sin(lng*PI)+40*Math.sin(lng/3*PI))*2/3;r+=(150*Math.sin(lng/12*PI)+300*Math.sin(lng/30*PI))*2/3;return r;}
+// 高德官网已迁移到 gaode.com：www.amap.com/dir 不解析 from/to 简写参数（会两端都空）；
+// 正确深链是 gaode.com/dir + 方括号参数 to[lnglat]=经度,纬度 / to[name]=名称。
+// 同时用浏览器定位把起点也自动填好（WGS84->GCJ02），跳过去就是完整路线；定位失败则降级为只传终点。
+function openAmap(plng,plat,pname){
+  pname = pname||'电杆';
+  var toLngLat = plng.toFixed(6)+','+plat.toFixed(6);
+  var base = 'https://www.gaode.com/dir?to[name]='+encodeURIComponent(pname)+'&to[lnglat]='+toLngLat+'&type=car';
+  if(navigator.geolocation){
+    try{
+      navigator.geolocation.getCurrentPosition(function(pos){
+        var c = wgs2gcj(pos.coords.longitude, pos.coords.latitude);
+        var fromLngLat = c[0].toFixed(6)+','+c[1].toFixed(6);
+        location.href = 'https://www.gaode.com/dir?from[name]=我的位置&from[lnglat]='+fromLngLat+'&to[name]='+encodeURIComponent(pname)+'&to[lnglat]='+toLngLat+'&type=car';
+      }, function(){ location.href = base; }, {enableHighAccuracy:true, timeout:3000, maximumAge:0});
+    }catch(e){ location.href = base; }
+  } else { location.href = base; }
+}
 function wgs2gcj(lng,lat){if(outOfChina(lng,lat))return[lng,lat];let dlat=tLat(lng-105,lat-35),dlng=tLng(lng-105,lat-35);let rl=lat/180*PI,m=Math.sin(rl);m=1-EE*m*m;let sm=Math.sqrt(m);dlat=(dlat*180)/((A*(1-EE))/(m*sm)*PI);dlng=(dlng*180)/((A/sm)*Math.cos(rl)*PI);return [lng+dlng,lat+dlat];}
 function gcj2bd(lng,lat){let x=lng,y=lat,z=Math.sqrt(x*x+y*y)+0.00002*Math.sin(y*PI),th=Math.atan2(y,x)+0.000003*Math.cos(x*PI);return [z*Math.cos(th)+0.0065,z*Math.sin(th)+0.0065];}
 
