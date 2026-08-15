@@ -370,10 +370,11 @@ class H(BaseHTTPRequestHandler):
                 return
             self._send(200, {"user": user})
             return
-        # 以下均需登录
-        if not self._auth():
-            self._send(401, {"error": "未登录"})
-            return
+        # 以下均需登录；地图数据 /api/poles/all 免登录，避免部署后未登录导致地图空白、误判未更新
+        if u.path != "/api/poles/all":
+            if not self._auth():
+                self._send(401, {"error": "未登录"})
+                return
         if u.path == "/api/poles" or u.path == "/api/poles/all":
             q = urllib.parse.parse_qs(u.query).get("q", [""])[0].strip()
             id2name = {v: k for k, v in fmap(MASTER).items()}
