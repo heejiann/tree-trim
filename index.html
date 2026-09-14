@@ -48,19 +48,38 @@
   /* 主框架；用 100dvh 兼容 iOS Safari 底部工具栏 */
   #appView{display:flex;flex-direction:column;height:100vh;height:100dvh}
   main{flex:1;position:relative;overflow:hidden;background:var(--bg)}
-  #homeSection,#mapSection,#jobSection{position:absolute;inset:0}
-  #homeSection{display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)}
-  #jobSection{overflow:auto;padding-bottom:90px}
+  #homeSection,#mapSection,#jobSection,#poleSection,#acceptSection{position:absolute;inset:0}
+  /* 首页用 margin:auto 居中：内容矮时垂直居中，内容超高时能滚动且顶部不被裁 */
+  #homeSection{display:flex;justify-content:center;overflow:auto;padding:20px;background:var(--bg)}
+  /* 内容型区块统一可滚动（底部留白避开 iOS 工具栏） */
+  #jobSection,#poleSection,#acceptSection{overflow:auto;padding-bottom:90px}
 
-  /* 首页两个大按钮 */
-  .home-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;width:100%;max-width:640px}
+  /* 首页四张大按钮：宽屏 2×2，手机也保持 2×2（卡片整体缩小） */
+  .home-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;width:100%;max-width:620px;margin:auto}
   .home-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:34px 22px;text-align:center;cursor:pointer;
     box-shadow:0 4px 16px rgba(0,0,0,.06);transition:transform .15s,border-color .15s,box-shadow .15s}
   .home-card:hover,.home-card:active{border-color:var(--brand);transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.1)}
-  .home-card .icon{font-size:46px;margin-bottom:14px}
+  .home-card .icon{font-size:46px;margin-bottom:14px;line-height:1}
   .home-card h3{margin:0 0 10px;font-size:19px;color:var(--brand)}
   .home-card p{margin:0;font-size:13px;color:var(--mut);line-height:1.55}
-  @media(max-width:520px){.home-grid{grid-template-columns:1fr}}
+  /* 手机：仍是两列，但缩小内边距/图标/字号，避免文字被挤成一列一字 */
+  @media(max-width:560px){
+    #homeSection{padding:12px}
+    .home-grid{gap:12px;max-width:100%}
+    .home-card{padding:20px 11px;border-radius:15px;min-height:148px;
+      display:flex;flex-direction:column;justify-content:center}
+    .home-card .icon{font-size:34px;margin-bottom:9px}
+    .home-card h3{font-size:16px;margin-bottom:5px}
+    .home-card p{font-size:11.5px;line-height:1.45}
+  }
+  /* 超窄屏（≤340px）再收一点，保证两列不换行不溢出 */
+  @media(max-width:340px){
+    .home-grid{gap:9px}
+    .home-card{padding:15px 8px;min-height:132px}
+    .home-card .icon{font-size:28px;margin-bottom:7px}
+    .home-card h3{font-size:14px}
+    .home-card p{font-size:10.5px}
+  }
 
   /* 作业录入（复用） */
   .wrap{max-width:560px;margin:0 auto;padding:16px}
@@ -184,7 +203,17 @@
         <div class="home-card" onclick="showPage('job')">
           <div class="icon">📝</div>
           <h3>作业记录</h3>
-          <p>搜索或新建电杆，录入当天修剪作业与照片</p>
+          <p>搜索电杆，录入当天修剪作业与照片</p>
+        </div>
+        <div class="home-card" onclick="showPage('newpole')">
+          <div class="icon">📍</div>
+          <h3>新增电杆</h3>
+          <p>录入新电杆编号与地图定位，建立电杆档案</p>
+        </div>
+        <div class="home-card" onclick="showPage('accept')">
+          <div class="icon">✅</div>
+          <h3>验收导出</h3>
+          <p>按日期/电杆线路/状态筛选作业，一键导出验收资料</p>
         </div>
       </div>
     </div>
@@ -230,25 +259,8 @@
             <div class="sub-t">最近选择（最多 4 个，点一下直接选）</div>
             <div id="recentPoles"></div>
           </div>
-          <span class="link" onclick="showNewPole()">找不到？点此新建电杆 →</span>
+          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆」建档 →</span>
           <div id="poleList"></div>
-        </div>
-
-        <div class="card hidden" id="newPoleCard">
-          <div class="step">第 1.5 步 · 新建电杆（仅录编号 + 定位）</div>
-          <label>电杆编号 *</label>
-          <input id="np_no" placeholder="10kV电站F1什么线#01杆">
-          <label>定位 *</label>
-          <button class="btn-sm" style="width:auto" onclick="openMap()">选择定位（地图选点）</button>
-          <div class="locline" id="locline">未选择定位</div>
-          <label>位置描述</label>
-          <input id="np_desc" placeholder="如 XX路XX号旁">
-          <label>所属供电所（默认：佛山 / 三水 / 乐平）</label>
-          <select id="np_area1" onchange="fillArea2()"><option value="">请选择市局</option></select>
-          <select id="np_area2" onchange="fillArea3()" style="margin-top:10px"><option value="">请选择区/县供电局</option></select>
-          <select id="np_area3" style="margin-top:10px"><option value="">请选择供电所（无则选"无"）</option></select>
-          <button class="btn-primary" style="margin-top:14px" onclick="submitNewPole()">新建并继续</button>
-          <button class="btn-ghost" style="margin-top:8px" onclick="backToSearch()">返回</button>
         </div>
 
         <div class="card hidden" id="jobCard">
@@ -289,6 +301,65 @@
         </div>
       </div>
     </div>
+
+    <!-- 板块：新增电杆（独立建档，不再嵌在作业记录里） -->
+    <div id="poleSection" class="hidden">
+      <div class="wrap">
+        <div class="card" id="poleFormCard">
+          <div class="step">新增电杆 · 录入编号与定位</div>
+          <label>电杆编号 *</label>
+          <input id="np_no" placeholder="10kV电站F1什么线#01杆">
+          <label>定位 *</label>
+          <button class="btn-sm" style="width:auto" onclick="openMap()">选择定位（地图选点）</button>
+          <div class="locline" id="locline">未选择定位</div>
+          <label>位置描述</label>
+          <input id="np_desc" placeholder="如 XX路XX号旁">
+          <label>所属供电所（默认：佛山 / 三水 / 乐平）</label>
+          <select id="np_area1" onchange="fillArea2()"><option value="">请选择市局</option></select>
+          <select id="np_area2" onchange="fillArea3()" style="margin-top:10px"><option value="">请选择区/县供电局</option></select>
+          <select id="np_area3" style="margin-top:10px"><option value="">请选择供电所（无则选"无"）</option></select>
+          <button class="btn-primary" style="margin-top:14px" onclick="submitNewPole()">新建电杆</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="clearNewPoleForm()">清空重填</button>
+        </div>
+
+        <div class="card hidden" id="npDoneCard">
+          <div class="step">✅ 电杆已建档</div>
+          <div id="np_done_info" style="font-size:14px;line-height:1.7"></div>
+          <button class="btn-primary" style="margin-top:14px" onclick="goJobFromNewPole()">去录入该杆作业 →</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="continueNewPole()">继续新增下一根</button>
+        </div>
+      </div>
+    </div>
+    <!-- 板块3：验收导出 -->
+    <div id="acceptSection" class="hidden">
+      <div class="wrap">
+        <div class="card">
+          <div class="step">验收资料筛选（组合条件，可留空）</div>
+          <div class="row" style="flex-wrap:wrap;gap:10px">
+            <div style="flex:1 1 160px"><label>开始日期</label><input id="ac_start" type="date"></div>
+            <div style="flex:1 1 160px"><label>结束日期</label><input id="ac_end" type="date"></div>
+          </div>
+          <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:8px">
+            <select id="ac_city" class="sb-input" onchange="onAcceptCity()" style="flex:1 1 150px"><option value="">市局（全部）</option></select>
+            <select id="ac_bureau" class="sb-input" onchange="onAcceptBureau()" style="flex:1 1 150px"><option value="">区/县局（全部）</option></select>
+            <select id="ac_station" class="sb-input" style="flex:1 1 150px"><option value="">供电所（全部）</option></select>
+          </div>
+          <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:8px">
+            <input id="ac_line" class="sb-input" placeholder="线路名（模糊，可空）" style="flex:1 1 200px" oninput="acDebounced()">
+            <select id="ac_risk" class="sb-input" style="flex:1 1 130px" onchange="loadAcceptPreview()">
+              <option value="">隐患等级（全部）</option>
+              <option>低</option><option>中</option><option>高</option>
+            </select>
+            <button class="btn-sm" style="flex:0 0 96px" onclick="loadAcceptPreview()">查询</button>
+            <button class="btn-ghost btn-sm" style="flex:0 0 80px" onclick="resetAccept()">重置</button>
+          </div>
+          <div class="sub-t" style="margin-top:10px">符合条件作业：<b id="ac_cnt">0</b> 条
+            <button class="btn-primary btn-sm" style="float:right" id="ac_export" onclick="generateAcceptance()">⬇ 生成验收资料包（ZIP）</button>
+          </div>
+          <div id="ac_list" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -324,13 +395,17 @@
 function toast(msg,dur){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),dur||2200);}
 const AREA_TREE = {
   "佛山供电局": {
-    "禅城供电局": [], "南海供电局": ["大沥供电所","里水供电所","九江供电所","西樵供电所","罗村供电所","平洲供电所","狮山供电所"],
-    "顺德供电局": ["大良供电所","北滘供电所","陈村供电所","乐从供电所","伦教供电所","容桂供电所","均安供电所","杏坛供电所"],
-    "三水供电局": ["西南供电所","白坭供电所","乐平供电所","芦苞供电所","大塘供电所"],
+    "禅城供电局": ["城区供电所","南庄供电所"],
+    "南海供电局": ["大沥供电所","里水供电所","九江供电所","西樵供电所","罗村供电所","平洲供电所","狮山供电所","桂城供电所","丹灶供电所"],
+    "顺德供电局": ["大良供电所","北滘供电所","陈村供电所","乐从供电所","伦教供电所","容桂供电所","均安供电所","杏坛供电所","龙江供电所","勒流供电所"],
+    "三水供电局": ["西南供电所","白坭供电所","乐平供电所","芦苞供电所","大塘供电所","南山供电所"],
     "高明供电局": ["荷城供电所","杨和供电所","明城供电所","更合供电所"]
   },
   "广州供电局": {
-    "越秀供电局": [], "荔湾供电局": [], "海珠供电局": [], "天河供电局": [],
+    "越秀供电局": [],
+    "荔湾供电局": [],
+    "海珠供电局": [],
+    "天河供电局": [],
     "白云供电局": ["江高供电所","人和供电所","钟落潭供电所","西郊供电所"],
     "黄埔供电局": ["九龙供电所","萝岗供电所"],
     "番禺供电局": ["南村供电所","石楼供电所","大岗供电所","东涌供电所","大石供电所"],
@@ -374,6 +449,8 @@ function showPage(page, silent){
   const home = document.getElementById('homeSection');
   const map = document.getElementById('mapSection');
   const job = document.getElementById('jobSection');
+  const pole = document.getElementById('poleSection');
+  const accept = document.getElementById('acceptSection');
   const backBtn = document.getElementById('backBtn');
   const sub = document.getElementById('headerSub');
   const topbar = document.getElementById('topbar');
@@ -382,6 +459,8 @@ function showPage(page, silent){
   home.classList.add('hidden');
   map.classList.add('hidden');
   job.classList.add('hidden');
+  pole.classList.add('hidden');
+  accept.classList.add('hidden');
   backBtn.classList.add('hidden');
 
   if(page==='home'){
@@ -400,9 +479,23 @@ function showPage(page, silent){
     job.classList.remove('hidden');
     backBtn.classList.remove('hidden');
     topbar.classList.add('sm');
-    sub.textContent = '作业记录 · 搜杆 / 建杆 / 录作业';
+    sub.textContent = '作业记录 · 搜杆 / 录作业';
     document.getElementById('poleList').innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">输入电杆编号后点「搜索」</div>';
     renderRecent();
+  } else if(page==='newpole'){
+    pole.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    topbar.classList.add('sm');
+    sub.textContent = '新增电杆 · 录编号 / 地图定位 / 建档';
+    hide('npDoneCard'); show('poleFormCard');
+    initArea();
+  } else if(page==='accept'){
+    accept.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    topbar.classList.add('sm');
+    sub.textContent = '验收导出 · 筛选作业 / 一键导出验收资料';
+    initAcceptArea();
+    loadAcceptPreview();
   }
   if(!silent) hideDetail();
 }
@@ -664,6 +757,107 @@ function fillArea3(){
   if(list.length===0){const n=document.createElement('option');n.value="无";n.textContent="无";s3.appendChild(n);s3.value="无";}
   else if(list.includes("乐平供电所")) s3.value="乐平供电所";
 }
+
+/* ===== 验收导出板块 ===== */
+let _acTimer=null;
+function initAcceptArea(){
+  const c=document.getElementById('ac_city');
+  if(c.options.length>1) return; // 已初始化
+  c.innerHTML='<option value="">市局（全部）</option>';
+  Object.keys(AREA_TREE).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;c.appendChild(o);});
+  c.value="佛山供电局"; onAcceptCity();
+}
+function onAcceptCity(){
+  const c=document.getElementById('ac_city'),b=document.getElementById('ac_bureau'),s=document.getElementById('ac_station');
+  b.innerHTML='<option value="">区/县局（全部）</option>'; s.innerHTML='<option value="">供电所（全部）</option>';
+  const l2=AREA_TREE[c.value]||{};
+  Object.keys(l2).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;b.appendChild(o);});
+  if(l2["三水供电局"]!==undefined) b.value="三水供电局";
+  onAcceptBureau();
+}
+function onAcceptBureau(){
+  const c=document.getElementById('ac_city'),b=document.getElementById('ac_bureau'),s=document.getElementById('ac_station');
+  s.innerHTML='<option value="">供电所（全部）</option>';
+  const list=(AREA_TREE[c.value]&&AREA_TREE[c.value][b.value])||[];
+  list.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o);});
+  if(list.length===0){const n=document.createElement('option');n.value="无";n.textContent="无";s.appendChild(n);s.value="无";}
+  else if(list.includes("乐平供电所")) s.value="乐平供电所";
+}
+function acDebounced(){
+  if(_acTimer) clearTimeout(_acTimer);
+  _acTimer=setTimeout(loadAcceptPreview, 400);
+}
+function acceptFilters(){
+  return {
+    start: document.getElementById('ac_start').value.trim(),
+    end: document.getElementById('ac_end').value.trim(),
+    city: document.getElementById('ac_city').value.trim(),
+    bureau: document.getElementById('ac_bureau').value.trim(),
+    station: document.getElementById('ac_station').value.trim(),
+    line: document.getElementById('ac_line').value.trim(),
+    risk: document.getElementById('ac_risk').value.trim()
+  };
+}
+function loadAcceptPreview(){
+  const f=acceptFilters();
+  const qs=new URLSearchParams(f).toString();
+  fetch('/api/acceptance/preview?'+qs, {credentials:'include'})
+    .then(r=>r.json()).then(d=>{
+      const items=d.items||[];
+      document.getElementById('ac_cnt').textContent=items.length;
+      const box=document.getElementById('ac_list');
+      if(!items.length){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;padding:12px 0">无符合条件的作业记录</div>'; return; }
+      let h='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<tr style="background:#f0f4f2;color:#2f6b52;text-align:left">'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">#</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">电杆编号</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">作业日期</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">作业人员</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">树木</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">隐患</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">树枝量</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">标示牌</th></tr>';
+      items.forEach((it,i)=>{
+        h+='<tr>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+(i+1)+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.pole_no||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.date||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.worker||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.tree||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.risk||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.branch||'')+'</td>'
+          +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.sign||'')+'</td>'
+          +'</tr>';
+      });
+      h+='</table></div>';
+      box.innerHTML=h;
+    }).catch(e=>{ document.getElementById('ac_list').innerHTML='<div style="color:#c0392b">查询失败：'+esc(e)+'</div>'; });
+}
+function resetAccept(){
+  ['ac_start','ac_end','ac_line'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('ac_risk').value='';
+  initAcceptArea();
+  loadAcceptPreview();
+}
+function generateAcceptance(){
+  const f=acceptFilters();
+  const meta={ title:'树障清理修剪作业验收单', date_start:f.start, date_end:f.end };
+  const btn=document.getElementById('ac_export'); btn.disabled=true; btn.textContent='生成中…';
+  fetch('/api/acceptance/export', {method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filters:f, meta:meta})})
+    .then(r=>{ if(!r.ok) return r.json().then(d=>Promise.reject(d.error||'生成失败')); return r.blob(); })
+    .then(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url;
+      a.download='验收资料_'+(f.start||'')+'_'+(f.end||'')+'.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast('验收资料包已生成并开始下载（含 6 份表单）');
+    })
+    .catch(e=>{ toast('生成失败：'+(typeof e==='string'?e:JSON.stringify(e))); })
+    .finally(()=>{ btn.disabled=false; btn.textContent='⬇ 生成验收资料包（ZIP）'; });
+}
 const _RECENT_KEY='recentPoles';
 function getRecent(){ try{return JSON.parse(localStorage.getItem(_RECENT_KEY)||'[]')}catch(e){return[]} }
 function pushRecent(rid,no){
@@ -702,13 +896,25 @@ async function searchPoles(){
   });
   if(d.items.length>MAX) box.insertAdjacentHTML('beforeend','<div style="color:#8a8f99;font-size:12px;margin-top:8px">仅显示前 '+MAX+' 个，请输入更精确编号（如 #03 杆）</div>');
 }
-function showNewPole(){hide('searchCard');show('newPoleCard');initArea();fillArea2();fillArea3();}
-function backToSearch(){hide('newPoleCard');show('searchCard');}
+/* ===== 新增电杆板块（独立建档） ===== */
+function clearNewPoleForm(){
+  ['np_no','np_desc'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  const ll=document.getElementById('locline'); if(ll) ll.textContent='未选择定位';
+  window._lat=null;window._lng=null;_pick=null;
+  initArea();
+}
+function continueNewPole(){ hide('npDoneCard'); show('poleFormCard'); clearNewPoleForm(); const e=document.getElementById('np_no'); if(e) e.focus(); }
+function goJobFromNewPole(){
+  showPage('job');
+  if(window._npLast) selectPole(window._npLast.rid, window._npLast.no);
+}
+
+/* ===== 作业记录板块 ===== */
 function selectPole(rid,no){
   window._rid=rid;
   pushRecent(rid,no);
   document.getElementById('curPole').textContent=no;
-  hide('searchCard');hide('newPoleCard');show('jobCard');
+  hide('searchCard');show('jobCard');
   if(!document.getElementById('j_date').value) document.getElementById('j_date').value=new Date().toISOString().slice(0,10);
 }
 let _map=null,_marker=null,_pick=null;
@@ -919,7 +1125,13 @@ async function submitNewPole(){
     body:JSON.stringify({pole_no:no,lng:String(window._lng),lat:String(window._lat),desc:document.getElementById('np_desc').value,area})});
   const d=await r.json();
   if(!d.record_id){toast('建杆失败: '+(d.error||''));return;}
-  toast('电杆已新建'); selectPole(d.record_id,no);
+  window._npLast={rid:d.record_id,no:no};
+  document.getElementById('np_done_info').innerHTML=
+    '电杆编号：<b>'+esc(no)+'</b><br>'
+    +'所属供电所：'+esc(area||'(未填)')+'<br>'
+    +'坐标：'+Number(window._lat).toFixed(6)+', '+Number(window._lng).toFixed(6);
+  hide('poleFormCard'); show('npDoneCard');
+  toast('电杆已新建 ✓');
 }
 async function filesToB64(input){
   return Promise.all(Array.from(input.files).map(f=>new Promise(res=>{
@@ -943,7 +1155,7 @@ async function submitJob(){
   else toast('提交失败: '+(d.error||JSON.stringify(d)));
 }
 function resetAll(){
-  hide('jobCard');hide('newPoleCard');show('searchCard');
+  hide('jobCard');show('searchCard');
   document.getElementById('poleList').innerHTML='';document.getElementById('q').value='';renderRecent();
   document.getElementById('locline').textContent='未选择定位';
   ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});

@@ -1,2 +1,4 @@
-# 本项目仅使用 Python 标准库（http.server / urllib 等），无第三方依赖。
-# 保留此文件以便 Railway / Render 等平台识别为 Python 项目。
+# 主服务仅用 Python 标准库（http.server / urllib 等）。
+# 但「验收导出」acceptance_docx.py 依赖 python-docx（server.py 以 sys.executable 子进程调用它），
+# 线上必须安装，否则 /api/acceptance/export 会 500。
+python-docx>=1.1.0
