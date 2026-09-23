@@ -356,6 +356,11 @@
           <div class="sub-t" style="margin-top:10px">符合条件作业：<b id="ac_cnt">0</b> 条
             <button class="btn-primary btn-sm" style="float:right" id="ac_export" onclick="generateAcceptance()">⬇ 生成验收资料包（ZIP）</button>
           </div>
+          <div style="margin-top:6px;font-size:13px;color:#2f6b52">
+            已勾选 <b id="ac_selcnt">0</b> 条 ·
+            <label style="cursor:pointer"><input type="checkbox" id="ac_selall" checked onchange="acToggleAll(this)"> 全选</label>
+            <span style="color:#8a8f99">（勾选后再点上方按钮，只打包勾选的）</span>
+          </div>
           <div id="ac_list" style="margin-top:10px"></div>
         </div>
       </div>
@@ -806,9 +811,10 @@ function loadAcceptPreview(){
       const items=d.items||[];
       document.getElementById('ac_cnt').textContent=items.length;
       const box=document.getElementById('ac_list');
-      if(!items.length){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;padding:12px 0">无符合条件的作业记录</div>'; return; }
-      let h='<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
-        +'<tr style="background:#f0f4f2;color:#2f6b52;text-align:left">'
+      if(!items.length){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;padding:12px 0">无符合条件的作业记录</div>'; document.getElementById('ac_selcnt').textContent=0; return; }
+      let h='<div style="overflow:auto;max-height:420px"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+        +'<tr style="background:#f0f4f2;color:#2f6b52;text-align:left;position:sticky;top:0">'
+        +'<th style="padding:6px 8px;border:1px solid #ddd;width:34px"><input type="checkbox" id="ac_selall2" checked onchange="acToggleAll(this)"></th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">#</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">电杆编号</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">作业日期</th>'
@@ -818,7 +824,9 @@ function loadAcceptPreview(){
         +'<th style="padding:6px 8px;border:1px solid #ddd">树枝量</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">标示牌</th></tr>';
       items.forEach((it,i)=>{
+        const rid=esc(it.record_id||('r'+i));
         h+='<tr>'
+          +'<td style="padding:6px 8px;border:1px solid #eee"><input type="checkbox" class="ac_chk" value="'+rid+'" checked onchange="acSelSync()"></td>'
           +'<td style="padding:6px 8px;border:1px solid #eee">'+(i+1)+'</td>'
           +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.pole_no||'')+'</td>'
           +'<td style="padding:6px 8px;border:1px solid #eee">'+esc(it.date||'')+'</td>'
@@ -831,7 +839,22 @@ function loadAcceptPreview(){
       });
       h+='</table></div>';
       box.innerHTML=h;
+      acSelSync();
     }).catch(e=>{ document.getElementById('ac_list').innerHTML='<div style="color:#c0392b">查询失败：'+esc(e)+'</div>'; });
+}
+function acToggleAll(master){
+  document.querySelectorAll('.ac_chk').forEach(c=>{ c.checked=master.checked; });
+  const a2=document.getElementById('ac_selall2'); if(a2) a2.checked=master.checked;
+  const a1=document.getElementById('ac_selall'); if(a1) a1.checked=master.checked;
+  acSelSync();
+}
+function acSelSync(){
+  const chks=document.querySelectorAll('.ac_chk');
+  const n=Array.from(chks).filter(c=>c.checked).length;
+  document.getElementById('ac_selcnt').textContent=n;
+  const all = chks.length>0 && n===chks.length;
+  const a1=document.getElementById('ac_selall'); if(a1) a1.checked=all;
+  const a2=document.getElementById('ac_selall2'); if(a2) a2.checked=all;
 }
 function resetAccept(){
   ['ac_start','ac_end','ac_line'].forEach(id=>document.getElementById(id).value='');
@@ -842,10 +865,12 @@ function resetAccept(){
 function generateAcceptance(){
   const f=acceptFilters();
   const meta={ title:'树障清理修剪作业验收单', date_start:f.start, date_end:f.end };
+  const sel=Array.from(document.querySelectorAll('.ac_chk')).filter(c=>c.checked).map(c=>c.value);
+  if(sel.length===0){ toast('请先勾选至少一条作业记录'); return; }
   const btn=document.getElementById('ac_export'); btn.disabled=true; btn.textContent='生成中…';
   fetch('/api/acceptance/export', {method:'POST', credentials:'include',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({filters:f, meta:meta})})
+    body: JSON.stringify({filters:f, meta:meta, selected:sel})})
     .then(r=>{ if(!r.ok) return r.json().then(d=>Promise.reject(d.error||'生成失败')); return r.blob(); })
     .then(blob=>{
       const url=URL.createObjectURL(blob);

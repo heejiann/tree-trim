@@ -43,6 +43,7 @@ _CMA_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) A
 _TYPHOON_CACHE = {"ts": 0.0, "data": None}
 
 _token = None
+_token_exp = 0.0   # token 过期的单调时钟时间点（见 get_token）
 _fmap = {}
 
 
@@ -60,6 +61,9 @@ def api(method, path, body=None, token=None):
             return e.code, json.loads(e.read().decode())
         except Exception:
             return e.code, {"error": str(e)}
+    except Exception as e:
+        # 网络异常（超时 / 代理不可达 / DNS 等）一律降级为失败元组，避免向上抛异常拖垮导出
+        return 0, {"error": str(e)}
 
 
 def _num(x):
@@ -202,14 +206,29 @@ def _zj_typhoons():
 
 
 def get_token():
-    global _token
-    if _token:
+    """获取 tenant_access_token，带过期续期。
+
+    飞书 token 有效期约 2 小时（响应里的 expire，秒）。旧实现只判 `if _token` 就永久复用，
+    导致常驻进程（launchd 本地服务 / 8010 验证服 / Render 长时间不休眠的实例）启动约 2 小时后
+    所有飞书接口都返回 400 / code 99991663「Invalid access token」——重启才能恢复。
+    这里改成按 expire 提前 10 分钟自动续期。
+    """
+    global _token, _token_exp
+    now = time.monotonic()
+    if _token and now < _token_exp:
         return _token
     s, o = api("POST", "/auth/v3/tenant_access_token/internal",
                {"app_id": APP_ID, "app_secret": APP_SECRET})
-    _token = o.get("tenant_access_token")
-    if not _token:
+    tok = o.get("tenant_access_token")
+    if not tok:
+        # 续期失败时不要清掉旧 token 之外的任何状态；直接报错让上层看到真实原因
         raise RuntimeError("获取 token 失败: " + str(o))
+    _token = tok
+    try:
+        expire = int(o.get("expire") or 7200)
+    except Exception:
+        expire = 7200
+    _token_exp = now + max(expire - 600, 60)   # 提前 10 分钟续期，下限 60 秒
     return _token
 
 
@@ -387,6 +406,60 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode())
+
+    def _do_export(self, data):
+        f = data.get("filters", {}) or {}
+        selected = data.get("selected", None)  # 勾选的 record_id 列表（可空=全部）
+        items = self._acceptance_jobs(
+            f.get("start", ""), f.get("end", ""), f.get("city", ""),
+            f.get("bureau", ""), f.get("station", ""), f.get("line", ""), f.get("risk", ""))
+        if selected:
+            wanted = set(selected)
+            items = [it for it in items if it.get("record_id") in wanted]
+        meta = data.get("meta", {}) or {}
+        import subprocess, tempfile
+        inj = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+                                          suffix=".json", prefix="acc_")
+        json.dump({"items": items, "meta": meta}, inj, ensure_ascii=False)
+        inj.close()
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        outp = os.path.join(tempfile.gettempdir(), "acceptance_%s.zip" % stamp)
+        gen = os.path.join(HERE, "acceptance_docx.py")
+        py = sys.executable
+        if not os.path.exists(gen):
+            self._send(500, {"error": "验收生成器缺失"})
+            return
+        try:
+            # 子进程剥离代理环境变量，直连飞书（避免沙箱/本地代理导致附件 CDN 拉取超时拖垮导出）
+            _env = os.environ.copy()
+            for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+                       "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+                _env.pop(_k, None)
+            p = subprocess.run([py, gen, "--package", inj.name, outp],
+                               capture_output=True, text=True, timeout=240, env=_env)
+        except Exception as e:
+            self._send(500, {"error": "生成进程异常", "detail": str(e)})
+            return
+        if p.returncode != 0 or not os.path.isfile(outp):
+            self._send(500, {"error": "验收资料生成失败", "detail": (p.stderr or "")[-2000:]})
+            return
+        with open(outp, "rb") as fh:
+            zbuf = fh.read()
+        try:
+            os.remove(inj.name); os.remove(outp)
+        except Exception:
+            pass
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        # 注意：http.server 的 send_header 只能编码 latin-1，中文文件名会抛 UnicodeEncodeError。
+        # 按 RFC 6266 给 ASCII 回退名 + filename*=UTF-8'' 的真实名，两者都保留中文可读性。
+        _fn = "验收资料_%s.zip" % stamp
+        self.send_header("Content-Disposition",
+                         "attachment; filename=\"acceptance_%s.zip\"; filename*=UTF-8''%s"
+                         % (stamp, urllib.parse.quote(_fn)))
+        self.send_header("Content-Length", str(len(zbuf)))
+        self.end_headers()
+        self.wfile.write(zbuf)
 
     def _acceptance_jobs(self, start, end, city, bureau, station, line, risk):
         """按组合条件筛选作业记录（验收板块用）。返回带电杆信息的作业列表。"""
@@ -761,43 +834,11 @@ class H(BaseHTTPRequestHandler):
             self._send(200, {"ok": True})
             return
         if u.path == "/api/acceptance/export":
-            f = data.get("filters", {}) or {}
-            items = self._acceptance_jobs(
-                f.get("start", ""), f.get("end", ""), f.get("city", ""),
-                f.get("bureau", ""), f.get("station", ""), f.get("line", ""), f.get("risk", ""))
-            meta = data.get("meta", {}) or {}
-            import subprocess, tempfile
-            inj = tempfile.NamedTemporaryFile(delete=False, suffix=".json", prefix="acc_")
-            json.dump({"items": items, "meta": meta}, inj, ensure_ascii=False)
-            inj.close()
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            outp = os.path.join(tempfile.gettempdir(), "acceptance_%s.zip" % stamp)
-            gen = os.path.join(HERE, "acceptance_docx.py")
-            py = sys.executable
-            if not os.path.exists(gen):
-                self._send(500, {"error": "验收生成器缺失"})
-                return
             try:
-                p = subprocess.run([py, gen, "--package", inj.name, outp],
-                                   capture_output=True, text=True, timeout=240)
+                self._do_export(data)
             except Exception as e:
-                self._send(500, {"error": "生成进程异常", "detail": str(e)})
-                return
-            if p.returncode != 0 or not os.path.isfile(outp):
-                self._send(500, {"error": "验收资料生成失败", "detail": (p.stderr or "")[-2000:]})
-                return
-            with open(outp, "rb") as fh:
-                zbuf = fh.read()
-            try:
-                os.remove(inj.name); os.remove(outp)
-            except Exception:
-                pass
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", 'attachment; filename="验收资料_%s.zip"' % stamp)
-            self.send_header("Content-Length", str(len(zbuf)))
-            self.end_headers()
-            self.wfile.write(zbuf)
+                import traceback as _tb
+                self._send(500, {"error": "导出异常", "detail": repr(e), "trace": _tb.format_exc()[-1500:]})
             return
         self._send(404, {"error": "not found"})
 
