@@ -144,6 +144,14 @@
   .job-item{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}
   .job-item .jt{font-weight:600;color:var(--brand2)}
   .job-item .jm{font-size:12px;color:var(--mut);margin-top:3px}
+  /* 勘察记录折叠块（地图详情内，跟在作业记录下方） */
+  .kc-box{border:1px solid var(--line);border-radius:10px;margin-top:10px;overflow:hidden;background:#fafbfc}
+  .kc-sum{cursor:pointer;font-weight:600;padding:10px 12px;list-style:none;user-select:none;
+    display:flex;align-items:center;gap:6px;color:var(--brand2);background:#f1f5f9}
+  .kc-sum::-webkit-details-marker{display:none}
+  .kc-sum::before{content:"▸";font-size:11px;transition:transform .15s;color:var(--mut)}
+  .kc-box[open] .kc-sum::before{transform:rotate(90deg)}
+  .kc-body{padding:4px 12px 12px}
   /* 作业照片缩略图组 */
   .pg-l{font-size:12px;color:var(--mut);font-weight:600;margin:6px 0 4px}
   .pg{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
@@ -214,6 +222,11 @@
           <div class="icon">✅</div>
           <h3>验收导出</h3>
           <p>按日期/电杆线路/状态筛选作业，一键导出验收资料</p>
+        </div>
+        <div class="home-card" onclick="showPage('survey')">
+          <div class="icon">🔍</div>
+          <h3>勘察记录</h3>
+          <p>搜索电杆，登记勘察时间、现场环境与工程量预估</p>
         </div>
       </div>
     </div>
@@ -298,6 +311,45 @@
           <textarea id="j_note" placeholder="其他情况"></textarea>
           <button class="btn-primary" style="margin-top:14px" onclick="submitJob()">提交作业</button>
           <button class="btn-ghost" style="margin-top:8px" onclick="resetAll()">重新选择电杆</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 板块：勘察记录（与作业记录并列，登记电杆勘察信息） -->
+    <div id="surveySection" class="hidden">
+      <div class="wrap">
+        <div class="card" id="sSearchCard">
+          <div class="step">第 1 步 · 查找电杆</div>
+          <div class="row">
+            <input id="sq" placeholder="输入电杆编号查找" onkeydown="if(event.key==='Enter')searchSurveyPoles()">
+            <button class="btn-sm" style="flex:0 0 88px" onclick="searchSurveyPoles()">搜索</button>
+          </div>
+          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆」建档 →</span>
+          <div id="spoleList"></div>
+        </div>
+
+        <div class="card hidden" id="surveyCard">
+          <div class="step">第 2 步 · 登记勘察信息</div>
+          <div style="font-size:13px;color:var(--mut)">当前电杆：<b id="sCurPole"></b> <span class="tag" id="sCurTag">已选</span></div>
+          <hr>
+          <label>勘察时间 *</label>
+          <input id="s_date" type="date">
+          <label>现场环境</label>
+          <textarea id="s_env" placeholder="如 路旁空地 / 临近居民楼 / 鱼塘边 / 农田中等"></textarea>
+          <label>工程量预估</label>
+          <select id="s_estimate">
+            <option>半天</option><option>一天</option><option>小半天</option>
+          </select>
+          <label>作业方式</label>
+          <select id="s_method">
+            <option>人工</option><option>砍树车</option>
+          </select>
+          <label>备注</label>
+          <textarea id="s_note" placeholder="如 停车困难、树木大约高度、需协调事宜"></textarea>
+          <label>现场照片（拍照 / 选照片）</label>
+          <input id="s_photo" type="file" accept="image/*" multiple>
+          <button class="btn-primary" style="margin-top:14px" onclick="submitSurvey()">提交勘察</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="resetSurvey()">重新选择电杆</button>
         </div>
       </div>
     </div>
@@ -456,6 +508,7 @@ function showPage(page, silent){
   const job = document.getElementById('jobSection');
   const pole = document.getElementById('poleSection');
   const accept = document.getElementById('acceptSection');
+  const survey = document.getElementById('surveySection');
   const backBtn = document.getElementById('backBtn');
   const sub = document.getElementById('headerSub');
   const topbar = document.getElementById('topbar');
@@ -466,6 +519,7 @@ function showPage(page, silent){
   job.classList.add('hidden');
   pole.classList.add('hidden');
   accept.classList.add('hidden');
+  survey.classList.add('hidden');
   backBtn.classList.add('hidden');
 
   if(page==='home'){
@@ -501,6 +555,12 @@ function showPage(page, silent){
     sub.textContent = '验收导出 · 筛选作业 / 一键导出验收资料';
     initAcceptArea();
     loadAcceptPreview();
+  } else if(page==='survey'){
+    survey.classList.remove('hidden');
+    backBtn.classList.remove('hidden');
+    topbar.classList.add('sm');
+    sub.textContent = '勘察记录 · 搜杆 / 录勘察';
+    document.getElementById('spoleList').innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">输入电杆编号后点「搜索」</div>';
   }
   if(!silent) hideDetail();
 }
@@ -643,12 +703,17 @@ async function showDetail(rid){
   if(!p) return;
   if(p.lat!=null) _mapAdmin.setView([p.lat, p.lng], 17);
   if(_markers[rid]) _markers[rid].openPopup();
-  let jobs=[];
+  let jobs=[], surveys=[];
   _galleries=[];
   try{
     const r = await fetch('/api/poles/'+rid+'/jobs', {credentials:'same-origin'});
     const d = await r.json();
     jobs = d.items || [];
+  }catch(e){}
+  try{
+    const r2 = await fetch('/api/poles/'+rid+'/surveys', {credentials:'same-origin'});
+    const d2 = await r2.json();
+    surveys = d2.items || [];
   }catch(e){}
   // 导航链接（WGS84 -> GCJ02 -> BD09）
   const [glng,glat] = (p.lng!=null)?wgs2gcj(p.lng,p.lat):[p.lng,p.lat];
@@ -677,6 +742,20 @@ async function showDetail(rid){
       + (j.note?('<div class="jm">备注：'+esc(j.note)+'</div>'):'')
       + '</div>';
   });
+  // 勘察记录（可折叠，位于作业记录下方）
+  html += '<details class="kc-box"'+(surveys.length?' open':'')+'>'
+        + '<summary class="kc-sum">勘察记录（'+surveys.length+' 条）</summary>'
+        + '<div class="kc-body">';
+  if(!surveys.length) html += '<div style="color:#8a8f99">暂无勘察记录</div>';
+  surveys.forEach(s=>{
+    html += '<div class="job-item"><div class="jt">'+esc(s.date||'勘察')+'</div>'
+      + '<div class="jm">现场环境：'+esc(s.env||'-')+'</div>'
+      + '<div class="jm">工程量预估：'+esc(s.estimate||'-')+'　作业方式：'+esc(s.method||'-')+'</div>'
+      + (s.note?('<div class="jm">备注：'+esc(s.note)+'</div>'):'')
+      + photoGroup('现场照片', s.photos||[])
+      + '</div>';
+  });
+  html += '</div></details>';
   document.getElementById('pd_title').textContent = p.pole_no || '电杆详情';
   document.getElementById('pd_body').innerHTML = html;
   document.getElementById('poleDetail').classList.add('show');
@@ -1187,6 +1266,54 @@ function resetAll(){
   ['j_risk','j_sign'].forEach(id=>document.getElementById(id).selectedIndex=0);
   window._lat=null;window._lng=null;window._rid=null;_pick=null;
   initArea();
+}
+
+/* ===== 勘察记录板块 ===== */
+async function searchSurveyPoles(){
+  const q=document.getElementById('sq').value.trim();
+  const box=document.getElementById('spoleList'); box.innerHTML='';
+  if(!q){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">请输入电杆编号再搜索</div>'; return; }
+  const r=await fetch('/api/poles?q='+encodeURIComponent(q), {credentials:'same-origin'});
+  const d=await r.json();
+  if(!d.items||!d.items.length){box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">无匹配电杆</div>';return;}
+  const MAX=50;
+  d.items.slice(0,MAX).forEach(p=>{
+    const el=document.createElement('div'); el.className='pole';
+    el.innerHTML=`<div><div class="no">${esc(p.pole_no)}</div><div class="d">${esc(p.desc||'(无描述)')}</div></div><div class="d">选择 ›</div>`;
+    el.onclick=()=>selectSurveyPole(p.record_id,p.pole_no);
+    box.appendChild(el);
+  });
+  if(d.items.length>MAX) box.insertAdjacentHTML('beforeend','<div style="color:#8a8f99;font-size:12px;margin-top:8px">仅显示前 '+MAX+' 个，请输入更精确编号（如 #03 杆）</div>');
+}
+function selectSurveyPole(rid,no){
+  window._srid=rid;
+  document.getElementById('sCurPole').textContent=no;
+  hide('sSearchCard');show('surveyCard');
+  if(!document.getElementById('s_date').value) document.getElementById('s_date').value=new Date().toISOString().slice(0,10);
+}
+async function submitSurvey(){
+  if(!window._srid){toast('请先选择或新建电杆');return;}
+  if(!document.getElementById('s_date').value.trim()){toast('勘察时间必填');return;}
+  const body={
+    pole_record_id: window._srid,
+    survey_date: document.getElementById('s_date').value,
+    env: document.getElementById('s_env').value,
+    estimate: document.getElementById('s_estimate').value,
+    method: document.getElementById('s_method').value,
+    note: document.getElementById('s_note').value,
+    photos: await filesToB64(document.getElementById('s_photo'))
+  };
+  const r=await fetch('/api/surveys',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
+  const d=await r.json();
+  if(d.ok){toast('勘察已提交 ✓');resetSurvey();}
+  else toast('提交失败: '+(d.error||JSON.stringify(d)));
+}
+function resetSurvey(){
+  hide('surveyCard');show('sSearchCard');
+  document.getElementById('spoleList').innerHTML='';document.getElementById('sq').value='';
+  ['s_env','s_note','s_date','s_photo'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ['s_estimate','s_method'].forEach(id=>{const e=document.getElementById(id);if(e)e.selectedIndex=0;});
+  window._srid=null;
 }
 
 boot();

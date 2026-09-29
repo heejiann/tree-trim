@@ -25,6 +25,7 @@ APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
 APP_TOKEN = os.environ.get("FEISHU_APP_TOKEN", "FSiabEYY6ae0Gss7BD6cfLHNnrh")
 MASTER = os.environ.get("TABLE_MASTER", "tblJ8fUv7M6Qczwm")   # 电杆主数据库
 JOB = os.environ.get("TABLE_JOB", "tblRNU3FSXidthDh")          # 修剪作业记录
+SURVEY = os.environ.get("TABLE_SURVEY", "tblBToYTHkasOirS")     # 勘察记录
 PORT = int(os.environ.get("PORT", "8000"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://open.feishu.cn/open-apis"
@@ -306,7 +307,9 @@ def upload_file(table, filename, raw):
     req.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
     req.add_header("Authorization", "Bearer " + get_token())
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        # 强制直连飞书 drive，绕过本地/沙箱 HTTP 代理（多部分上传经代理易失败）
+        _op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with _op.open(req, timeout=60) as r:
             o = json.loads(r.read().decode())
         if o.get("code") == 0:
             return o.get("data", {}).get("file_token")
@@ -731,6 +734,33 @@ class H(BaseHTTPRequestHandler):
             out.sort(key=lambda x: x["date"] or "", reverse=True)
             self._send(200, {"items": out})
             return
+        m = re.match(r"^/api/poles/([\w-]+)/surveys$", u.path)
+        if m:
+            rid = m.group(1)
+            id2name = {v: k for k, v in fmap(SURVEY).items()}
+            out = []
+            for r in list_all(SURVEY):
+                fv = {id2name.get(k, k): v for k, v in r.get("fields", {}).items()}
+                relids = []
+                for x in (fv.get("关联电杆") or []):
+                    if isinstance(x, dict):
+                        for kk in ("record_ids", "record_id"):
+                            vv = x.get(kk)
+                            if isinstance(vv, list): relids.extend(vv)
+                            elif vv: relids.append(vv)
+                    elif isinstance(x, str):
+                        relids.append(x)
+                if rid in relids:
+                    out.append({"record_id": r["record_id"],
+                                "date": ms_to_date(fv.get("勘察时间", 0)),
+                                "env": fv.get("现场环境", ""),
+                                "estimate": fv.get("工程量预估", ""),
+                                "method": fv.get("作业方式", ""),
+                                "note": fv.get("备注", ""),
+                                "photos": attaches_to_list(fv.get("现场照片", []))})
+            out.sort(key=lambda x: x["date"] or "", reverse=True)
+            self._send(200, {"items": out})
+            return
         m = re.match(r"^/api/photo/([\w.\-]+)$", u.path)
         if m:
             self._photo(m.group(1))
@@ -828,6 +858,26 @@ class H(BaseHTTPRequestHandler):
             at = photos_to_attach(photos.get("attach"))
             if at: fields["附件"] = at
             s, o = create_record(JOB, fields)
+            if s // 100 != 2 or o.get("code") != 0:
+                self._send(500, {"error": o.get("msg") or "写入失败", "detail": o})
+                return
+            self._send(200, {"ok": True})
+            return
+        if u.path == "/api/surveys":
+            rid = data.get("pole_record_id", "")
+            if not rid:
+                self._send(400, {"error": "请先选择或新建电杆"})
+                return
+            fields = {"关联电杆": [rid],   # 双向关联字段(type21)：字符串数组
+                      "勘察时间": date_to_ms(data.get("survey_date", "")),
+                      "现场环境": data.get("env", ""),
+                      "工程量预估": data.get("estimate", ""),
+                      "作业方式": data.get("method", ""),
+                      "备注": data.get("note", "")}
+            ph = photos_to_attach(data.get("photos"))
+            if ph:
+                fields["现场照片"] = ph
+            s, o = create_record(SURVEY, fields)
             if s // 100 != 2 or o.get("code") != 0:
                 self._send(500, {"error": o.get("msg") or "写入失败", "detail": o})
                 return
