@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 修剪树枝作业 - 自建录入后端 (纯标准库, 无第三方依赖)
 # 飞书多维表格作为数据库, 本服务持有 tenant_access_token 做写入/读取。
-import os, sys, json, datetime, base64, secrets, re, time
+import os, sys, json, csv, datetime, base64, secrets, re, time, threading
 import urllib.request, urllib.error, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -256,18 +256,54 @@ def list_records(table, size=100):
     return o.get("data", {}).get("items", [])
 
 
-def list_all(table, limit=500):
-    """分页拉取全部记录（飞书 page_size 上限 100，超出需翻页）。"""
+_list_cache = {}   # table -> (取数时间, items)
+_STALE = set()     # 被写操作标记「待刷新」的表
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+_PAGE_SIZE = 500   # 实测飞书 bitable records 单页上限就是 500
+_REFRESHING = set()
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_file(table):
+    return os.path.join(_CACHE_DIR, "list_%s.json" % table)
+
+
+def _load_disk(table):
+    """读磁盘缓存，返回 (ts, items) 或 None。"""
+    try:
+        with open(_cache_file(table), encoding="utf-8") as f:
+            b = json.load(f)
+        items = b.get("items")
+        if isinstance(items, list) and items:
+            return float(b.get("ts") or 0), items
+    except Exception:
+        pass
+    return None
+
+
+def _save_disk(table, ts, items):
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        tmp = _cache_file(table) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"ts": ts, "items": items}, f, ensure_ascii=False)
+        os.replace(tmp, _cache_file(table))     # 原子替换，避免读到半截文件
+    except Exception as e:
+        sys.stderr.write(f"[cache] 写缓存失败 {table}: {e}\n")
+
+
+def _fetch_all(table):
+    """真·全量拉取（500/页）。电杆主表 4547 条约 10 次请求。"""
     t = get_token()
     out, token = [], None
-    while len(out) < limit:
-        sz = min(100, limit - len(out))
-        url = f"/bitable/v1/apps/{APP_TOKEN}/tables/{table}/records?page_size={sz}"
+    while True:
+        url = f"/bitable/v1/apps/{APP_TOKEN}/tables/{table}/records?page_size={_PAGE_SIZE}"
         if token:
             url += "&page_token=" + token
         s, o = api("GET", url, token=t)
         if s // 100 != 2:
             sys.stderr.write(f"[list_all] {table} GET {s}: {str(o)[:300]}\n"); sys.stderr.flush()
+            break
         items = o.get("data", {}).get("items", [])
         out.extend(items)
         token = o.get("data", {}).get("page_token")
@@ -276,10 +312,367 @@ def list_all(table, limit=500):
     return out
 
 
+def refresh_async(table):
+    """后台静默刷新缓存（同一张表同时只跑一个线程）。"""
+    with _CACHE_LOCK:
+        if table in _REFRESHING:
+            return False
+        _REFRESHING.add(table)
+
+    def work():
+        try:
+            items = _fetch_all(table)
+            if items:
+                ts = time.time()
+                with _CACHE_LOCK:
+                    _list_cache[table] = (ts, items)
+                _save_disk(table, ts, items)
+        except Exception as e:
+            sys.stderr.write(f"[refresh] {table}: {e}\n")
+        finally:
+            with _CACHE_LOCK:
+                _REFRESHING.discard(table)
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
+def list_all(table, limit=None, ttl=600):
+    """分页拉取记录。limit=None 表示全量。
+
+    性能说明（2026-09-29 实测）：飞书单页请求本身就要 1.4~5s，与代理无关；
+    旧实现 page_size=100 → 电杆表 4547 条要串行翻 46 页 ≈ 90~230s，
+    TTL 一到、点一下级联下拉就要卡一分钟。现改三层：
+      ① 内存缓存（TTL 600s）
+      ② 磁盘缓存 .cache/list_<table>.json —— 跨进程重启依然可用
+      ③ 兜底才真全量拉（page_size=500 → 10 页）
+    命中磁盘但已过期/被写入标记为脏时：**先返回旧数据 + 后台静默刷新**，
+    请求永远不会阻塞在飞书网络上。
+    """
+    now = time.time()
+    if limit is not None:
+        # 小量拉取（如最近 N 条）不值得缓存，保持单页直取
+        t = get_token()
+        s, o = api("GET", f"/bitable/v1/apps/{APP_TOKEN}/tables/{table}/records?page_size={max(1, min(_PAGE_SIZE, limit))}", token=t)
+        if s // 100 != 2:
+            return []
+        return o.get("data", {}).get("items", [])[:limit]
+
+    c = _list_cache.get(table)
+    if c and now - c[0] < ttl and table not in _STALE:
+        return c[1]
+
+    if not c:
+        d = _load_disk(table)
+        if d:
+            with _CACHE_LOCK:
+                _list_cache[table] = d
+            if now - d[0] >= ttl or table in _STALE:
+                _STALE.discard(table)
+                refresh_async(table)     # 先拿旧的顶上，后台换新
+            return d[1]
+
+    if c:
+        _STALE.discard(table)
+        refresh_async(table)             # 有过期数据：先用它的，后台刷新
+        return c[1]
+
+    # 首次：内存、磁盘都没有，只能同步全量（一次性成本）
+    items = _fetch_all(table)
+    if items:
+        ts = time.time()
+        with _CACHE_LOCK:
+            _list_cache[table] = (ts, items)
+        _save_disk(table, ts, items)
+        return items
+    return []
+
+
+def patch_cached(table, record_id, fields):
+    """把一次写操作就地合并进缓存，避免为看一条改动重拉 10 页。
+
+    飞书返回的 fields key 是 field_id，传入的是 field_name，需转换。
+    「位置地图」是 Location 字段（写字符串、读 dict），跳过不打补丁，
+    按 loc 字段计算的坐标会走「经度/纬度」文本字段，不受影响。
+    """
+    if not fields:
+        return
+    try:
+        n2id = fmap(table)
+    except Exception:
+        return
+    conv = {}
+    for k, v in fields.items():
+        if k == "位置地图":
+            continue
+        conv[n2id.get(k, k)] = v
+    with _CACHE_LOCK:
+        c = _list_cache.get(table)
+        if not c:
+            return
+        ts, items = c
+        for r in items:
+            if r.get("record_id") == record_id:
+                r.setdefault("fields", {}).update(conv)
+                break
+        else:
+            _STALE.add(table)    # 没命中（可能是新记录）→ 交给下次后台刷新
+            return
+        nts = time.time()
+        _list_cache[table] = (nts, items)
+        _save_disk(table, nts, items)
+
+
+def append_cached(table, record_id, fields):
+    """新增记录后就地追加进缓存。
+
+    否则「刚新增的杆」要等下一次后台全量刷新才出现在下拉里（体感像"没保存成功"）。
+    Location 字段跳过：写字符串、读回来是 dict，格式不同。
+    """
+    if not fields:
+        return
+    try:
+        n2id = fmap(table)
+    except Exception:
+        n2id = {}
+    conv = {n2id.get(k, k): v for k, v in fields.items() if k != "位置地图"}
+    with _CACHE_LOCK:
+        c = _list_cache.get(table)
+        if not c:
+            c = _load_disk(table)
+            if not c:
+                _STALE.add(table)     # 缓存不可用 → 交给后台刷新
+                return
+        ts, items = c
+        items.append({"record_id": record_id, "fields": conv})
+        nts = time.time()
+        _list_cache[table] = (nts, items)
+        _STALE.discard(table)
+    _save_disk(table, nts, items)
+
+
+# ---------- 组织层级：供电局 / 区局 / 供电所 ----------
+# 主表「供电所全称」里已经存了完整三级，格式固定为 `供电局 / 区局 / 供电所`：
+#   佛山供电局 / 南海供电局 / 丹灶供电所
+# 所以级联不需要新建字段，直接把这个字段拆成三级即可。
+_ORG_SEP = re.compile(r"\s*[/、>＞]\s*")
+
+
+def org_split(full):
+    """供电所全称 → (供电局, 区局, 供电所)。容忍只写一段/两段的情况。"""
+    parts = [x.strip() for x in _ORG_SEP.split(str(full or "").strip()) if x.strip()]
+    if not parts:
+        return ("", "", "")
+    if len(parts) >= 3:
+        return (parts[0], parts[1], parts[2])
+    if len(parts) == 2:
+        # 两段：末段是「所」→ 缺区局；否则按 局/区局 处理
+        if parts[1].endswith("供电所"):
+            return (parts[0], "", parts[1])
+        return (parts[0], parts[1], "")
+    p = parts[0]
+    if p.endswith("供电所"):        # 只写了所
+        return ("", "", p)
+    return (p, "", "")              # 只写了局
+
+
+def org_join(bureau, area, office):
+    """三级 → 供电所全称字符串（只保留非空段，用 ' / ' 连接）"""
+    return " / ".join([x.strip() for x in (bureau, area, office) if str(x or "").strip()])
+
+
+# ---------- 新增电杆：编号规则（必须与 build_feishu_import.py 已导入的 4547 条一致） ----------
+def _sub_short(sub):
+    """丹灶变电站 → 丹灶站"""
+    s = (sub or "").strip()
+    if s.endswith("变电站"):
+        return s[:-3] + "站"
+    if s.endswith("站"):
+        return s
+    return (s + "站") if s else ""
+
+
+def _line_core(line):
+    """线路字段值 701良登线 → 良登（剥前导数字编号，再去尾部「线/#」）"""
+    s = re.sub(r"^\d+", "", (line or "").strip())
+    return re.sub(r"[线#]+$", "", s).strip()
+
+
+def _norm_digits(d):
+    """杆号输入归一化 → '#7'。接受 7 / #7 / 7号 / 第7杆。"""
+    s = re.sub(r"[#＃号第杆\s]", "", str(d or "")).strip()
+    if not s or not re.match(r"^[0-9A-Za-z\-/]+$", s):
+        return ""
+    return "#" + s
+
+
+def _taqu_ok(t):
+    """新增台区名质量闸门：挡掉「竹径台区#13公用台变」这类垃圾（同导入时的口径）。"""
+    t = (t or "").strip()
+    if not t or len(t) > 14:
+        return ""
+    if re.search(r"[#＃]|公用|台变|配变|电站|箱变|开关站", t):
+        return ""
+    return t
+
+
+def _branch_ok(b):
+    """支线名质量闸门：挡掉空值/垃圾输入。允许「三眼桥支线」或直接「三眼桥」。"""
+    b = (b or "").strip()
+    if not b or len(b) > 16:
+        return ""
+    if re.search(r"[#＃]|台区|台变|配变|公用|电站|箱变|开关站|10kV", b):
+        return ""
+    return b
+
+
+def build_pole_no(sub, line, taqu, digits, branch=""):
+    """拼完整编号 → 丹灶站10kV良登线利恒兴支线竹径台区#7杆
+    支线段插在线路后台区前（与全库 1500+ 条含支线编号同规则）；无支线则省略。"""
+    base = "%s10kV%s线" % (_sub_short(sub), _line_core(line))
+    bg = _branch_ok(branch)
+    if bg:
+        base += bg if bg.endswith("支线") else bg + "支线"
+    tg = _taqu_ok(taqu)
+    if tg:
+        base += tg if tg.endswith("台区") else tg + "台区"
+    d = _norm_digits(digits)
+    return (base + d + "杆") if d else ""
+
+
+# ---- 支线候选：编号 → 支线名 映射（来自图纸提取的 poles_master + import 清单） ----
+_BRANCH_SRC = os.path.join(
+    "/Users/kimho/WorkBuddy/砍树勘察聊天文件录入系统", "poles_master.csv")
+_BRANCH_IMP = os.path.join(
+    "/Users/kimho/WorkBuddy/砍树勘察聊天文件录入系统", "feishu_poles_import.json")
+_NO2BRANCH = None          # 惰性加载：电杆编号 → 支线名
+_BRANCH_TS = 0.0
+
+
+def no2branch_map(force=False):
+    """编号→支线映射。图纸支线挂错会重提，源文件变了（1小时内）就自动重载。"""
+    global _NO2BRANCH, _BRANCH_TS
+    if _NO2BRANCH is not None and not force and time.time() - _BRANCH_TS < 3600:
+        return _NO2BRANCH
+    m = {}
+    try:
+        pid2br = {}
+        with open(_BRANCH_SRC, encoding="utf-8-sig") as f:
+            for r in csv.DictReader(f):
+                pid = (r.get("杆位ID") or "").strip()
+                br = (r.get("支线") or "").strip()
+                if pid and br:
+                    pid2br[pid] = br
+        if os.path.exists(_BRANCH_IMP):
+            with open(_BRANCH_IMP, encoding="utf-8") as f:
+                for x in json.load(f):
+                    no = (x.get("电杆编号") or "").strip()
+                    br = pid2br.get((x.get("_polesid") or "").strip())
+                    if no and br:
+                        m[no] = br
+    except Exception as e:
+        sys.stderr.write("no2branch_map failed: %r\n" % e)
+    if m:
+        _NO2BRANCH, _BRANCH_TS = m, time.time()
+    return _NO2BRANCH or {}
+
+
+def _fget(fields, n2id, name):
+    """取字段值：缓存里 key 是 field_id，但兼容直接存 field_name 的情况。"""
+    fid = n2id.get(name, name)
+    v = fields.get(fid)
+    return fields.get(name) if v is None else v
+
+
+def find_pole_by_no(pole_no):
+    """按编号精确查找（strip 比较），返回 record_id 或 None。用于新增时拦重号。"""
+    target = (pole_no or "").strip()
+    if not target:
+        return None
+    try:
+        n2id = fmap(MASTER)
+    except Exception:
+        n2id = {}
+    for r in list_all(MASTER):
+        if str(_fget(r.get("fields") or {}, n2id, "电杆编号") or "").strip() == target:
+            return r.get("record_id")
+    return None
+
+
+def inherit_area(sub, line):
+    """新增的杆没有「供电所全称」，从同线路已有杆继承一个，避免字段空着。"""
+    try:
+        n2id = fmap(MASTER)
+    except Exception:
+        n2id = {}
+    for r in list_all(MASTER):
+        f = r.get("fields") or {}
+        if (str(_fget(f, n2id, "变电站") or "") == sub
+                and str(_fget(f, n2id, "线路") or "") == line):
+            a = _fget(f, n2id, "供电所全称")
+            if a:
+                return a
+    return ""
+
+
+def _rid_missing(o):
+    """飞书报「record_id 不存在」（1254043 RecordIdNotFound）。
+
+    出现它基本意味着：这条记录在飞书 App/网页里被删掉了，而本机缓存还没跟上。
+    要当成「数据已变化」处理（刷缓存 + 友好提示），而不是把一长串飞书原始错误丢给用户。
+    """
+    s = str(o or "")
+    return "1254043" in s or "RecordIdNotFound" in s
+
+
+def drop_cache(table=None, hard=False):
+    """写操作后让记录缓存失效。
+
+    hard=False（默认）：只清内存 + 标记为脏，磁盘留作兜底 → 下次请求先返回旧数据、
+                        再后台刷新。写定位这类「改一条」不会让用户又等一次全量拉。
+    hard=True：连磁盘一起删（大批量导入后用），下次请求重新全量拉。
+    """
+    tables = list(_list_cache.keys()) if table is None else [table]
+    if table is None:
+        with _CACHE_LOCK:
+            _list_cache.clear()
+        _STALE.update(tables)
+    else:
+        with _CACHE_LOCK:
+            _list_cache.pop(table, None)
+        _STALE.add(table)
+    if hard:
+        for tb in tables:
+            try:
+                os.remove(_cache_file(tb))
+            except Exception:
+                pass
+
+
 def create_record(table, fields):
     t = get_token()
     s, o = api("POST", f"/bitable/v1/apps/{APP_TOKEN}/tables/{table}/records",
                {"fields": to_ids(table, fields)}, token=t)
+    if s // 100 == 2 and o.get("code") == 0:
+        rid = ((o.get("data") or {}).get("record") or {}).get("record_id")
+        if rid:
+            append_cached(table, rid, fields)   # 就地追加：新建的杆立刻可在下拉/地图看到
+        else:
+            drop_cache(table)
+    return s, o
+
+
+def update_record(table, record_id, fields):
+    """按 record_id 更新字段（v1 用 PUT /records/{record_id}）。
+
+    成功后就地给缓存打补丁：改一条记录不必重拉整表（10 页 ≈ 15s），
+    现场连续给多根杆打定位时，下拉里的「已定位」标记也能立刻正确。
+    """
+    t = get_token()
+    s, o = api("PUT", f"/bitable/v1/apps/{APP_TOKEN}/tables/{table}/records/{record_id}",
+               {"fields": to_ids(table, fields)}, token=t)
+    if s // 100 == 2 and o.get("code") == 0:
+        patch_cached(table, record_id, fields)
     return s, o
 
 
@@ -660,11 +1053,16 @@ class H(BaseHTTPRequestHandler):
                 self._send(401, {"error": "未登录"})
                 return
         if u.path == "/api/poles" or u.path == "/api/poles/all":
+            # /api/poles/all 供地图页：只返回「已定位」的杆。
+            # 导入 DXF 后主表 4500+ 条，全量推到前端会拖垮地图与搜索下拉；
+            # 地图本来也只画有坐标的点，未定位的杆等现场加了定位自然出现。
+            only_located = (u.path == "/api/poles/all")
             q = urllib.parse.parse_qs(u.query).get("q", [""])[0].strip()
             id2name = {v: k for k, v in fmap(MASTER).items()}
+            all_recs = list_all(MASTER)
             out = []
             seen = {}  # 电杆编号 -> 在 out 中的下标，用于去重
-            for r in list_all(MASTER):
+            for r in all_recs:
                 raw = r.get("fields", {})
                 fv = {id2name.get(k, k): v for k, v in raw.items()}
                 no = fv.get("电杆编号", "")
@@ -684,10 +1082,14 @@ class H(BaseHTTPRequestHandler):
                         a, b = loc["location"].split(","); lng = float(a); lat = float(b)
                     except Exception:
                         pass
+                if only_located and (lat is None or lng is None):
+                    continue
                 item = {"record_id": r["record_id"], "pole_no": no,
                         "desc": fv.get("位置描述", ""), "loc": (loc.get("location") if isinstance(loc, dict) else loc),
                         "lng": lng, "lat": lat,
-                        "area": fv.get("供电所全称", ""), "status": fv.get("电杆状态", "")}
+                        "area": fv.get("供电所全称", ""), "status": fv.get("电杆状态", ""),
+                        "sub": fv.get("变电站", ""), "line": fv.get("线路", ""), "taqu": fv.get("台区", ""),
+                        "source": fv.get("定位来源", "")}
                 # 按电杆编号去重：编号相同的多条记录只保留一条（优先带坐标的）
                 key = (no or "").strip()
                 if key:
@@ -699,7 +1101,113 @@ class H(BaseHTTPRequestHandler):
                     out.append(item)
                 else:
                     out.append(item)
-            self._send(200, {"items": out})
+            self._send(200, {"items": out, "total": len(all_recs),
+                             "located": sum(1 for x in out if x.get("lng") is not None)})
+            return
+        # 选杆加定位：级联下拉数据源（供电所→线路→台区→杆号）
+        if u.path == "/api/poles/pick":
+            qs = urllib.parse.parse_qs(u.query)
+            g = lambda k: qs.get(k, [""])[0].strip()
+            # 七级级联：供电局 → 区局 → 供电所 → 变电站 → 线路 → 台区 → 电杆
+            # org=0 可跳过组织三级（等价于旧的四级行为，供旧调用方兜底）
+            use_org = g("org") != "0"
+            bureau, area, office = g("bureau"), g("area"), g("office")
+            sub, line, taqu, kw = g("sub"), g("line"), g("taqu"), g("q")
+            id2name = {v: k for k, v in fmap(MASTER).items()}
+            rows = []
+            for r in list_all(MASTER):
+                fv = {id2name.get(k, k): v for k, v in r.get("fields", {}).items()}
+                bu, ar, of = org_split(fv.get("供电所全称"))
+                rows.append((r["record_id"], fv, bu, ar, of))
+            if use_org:
+                # 口径与验收导出板块保持一致：在「供电所全称」里做包含匹配
+                if bureau:
+                    rows = [x for x in rows if bureau in str(x[1].get("供电所全称") or "")]
+                if area:
+                    rows = [x for x in rows if area in str(x[1].get("供电所全称") or "")]
+                if office:
+                    rows = [x for x in rows if office in str(x[1].get("供电所全称") or "")]
+            if sub:
+                rows = [x for x in rows if x[1].get("变电站", "") == sub]
+            if line:
+                rows = [x for x in rows if x[1].get("线路", "") == line]
+            if taqu:
+                rows = [x for x in rows if x[1].get("台区", "") == taqu]
+            # 逐级返回：没选到哪一级，就返回下一级的候选
+            # 例外：前端要「不限台区、直接看该线全部杆」时带 list=1
+            want_poles = (g("list") == "1")
+            if use_org and not bureau:
+                self._send(200, {"level": "bureau", "items": sorted({x[2] for x in rows if x[2]})})
+                return
+            if use_org and not area:
+                self._send(200, {"level": "area", "items": sorted({x[3] for x in rows if x[3]})})
+                return
+            if use_org and not office:
+                self._send(200, {"level": "office", "items": sorted({x[4] for x in rows if x[4]})})
+                return
+            if not sub:
+                self._send(200, {"level": "sub", "items": sorted({x[1].get("变电站", "") for x in rows if x[1].get("变电站")})})
+                return
+            if not line:
+                self._send(200, {"level": "line", "items": sorted({x[1].get("线路", "") for x in rows if x[1].get("线路")})})
+                return
+            if not taqu and not want_poles:
+                self._send(200, {"level": "taqu", "items": sorted({x[1].get("台区", "") for x in rows if x[1].get("台区")})})
+                return
+            if kw:
+                kl = kw.lower()
+                rows = [x for x in rows if kl in str(x[1].get("电杆编号", "")).lower()]
+            out = []
+            for rid, fv, bu, ar, of in rows:
+                lng = lat = None
+                try:
+                    if fv.get("经度") not in (None, ""): lng = float(fv["经度"])
+                    if fv.get("纬度") not in (None, ""): lat = float(fv["纬度"])
+                except Exception:
+                    pass
+                loc = fv.get("位置地图")
+                if (lng is None or lat is None) and isinstance(loc, dict) and loc.get("location"):
+                    try:
+                        a, b = loc["location"].split(","); lng = float(a); lat = float(b)
+                    except Exception:
+                        pass
+                out.append({"record_id": rid, "pole_no": fv.get("电杆编号", ""),
+                            "desc": fv.get("位置描述", ""), "lng": lng, "lat": lat,
+                            "source": fv.get("定位来源", ""),
+                            "office_full": org_join(bu, ar, of)})
+            out.sort(key=lambda x: x["pole_no"])
+            self._send(200, {"level": "pole", "items": out})
+            return
+        # 新增电杆：预拼编号（图纸漏登的直线杆/支线杆用）+ 即时查重
+        if u.path == "/api/poles/preview-no":
+            qs = urllib.parse.parse_qs(u.query)
+            g = lambda k: (qs.get(k, [""])[0] or "").strip()
+            no = build_pole_no(g("sub"), g("line"), g("taqu"), g("digits"),
+                               branch=g("branch"))
+            dup = find_pole_by_no(no) if no else None
+            self._send(200, {"pole_no": no, "dup": bool(dup), "dup_record_id": dup})
+            return
+        # 新增电杆用：该线路下已有支线名候选（来自图纸提取，编号→支线映射）
+        if u.path == "/api/poles/branches":
+            qs = urllib.parse.parse_qs(u.query)
+            g = lambda k: (qs.get(k, [""])[0] or "").strip()
+            sub, line, taqu = g("sub"), g("line"), g("taqu")
+            n2id = fmap(MASTER)
+            id2name = {v: k for k, v in n2id.items()}
+            m = no2branch_map()
+            brs = set()
+            for r in list_all(MASTER):
+                fv = {id2name.get(k, k): v for k, v in r.get("fields", {}).items()}
+                if sub and fv.get("变电站", "") != sub:
+                    continue
+                if line and fv.get("线路", "") != line:
+                    continue
+                if taqu and fv.get("台区", "") != taqu:
+                    continue
+                br = m.get(str(fv.get("电杆编号") or "").strip())
+                if br:
+                    brs.add(br)
+            self._send(200, {"branches": sorted(brs)})
             return
         m = re.match(r"^/api/poles/([\w-]+)/jobs$", u.path)
         if m:
@@ -834,6 +1342,119 @@ class H(BaseHTTPRequestHandler):
             rid = o.get("data", {}).get("record", {}).get("record_id")
             self._send(200, {"record_id": rid, "pole_no": no})
             return
+        # 新增电杆定位：给主表里已存在的杆写真实坐标（选杆→加定位，不再手输编号）
+        if u.path == "/api/poles/locate":
+            rid = str(data.get("record_id", "")).strip()
+            if not rid:
+                self._send(400, {"error": "请先选择电杆"})
+                return
+            lng, lat = data.get("lng"), data.get("lat")
+            if lng in (None, "") or lat in (None, ""):
+                self._send(400, {"error": "请在地图上选点或使用当前位置"})
+                return
+            try:
+                lngf, latf = float(lng), float(lat)
+            except Exception:
+                self._send(400, {"error": "经纬度格式不正确"})
+                return
+            if not (-180.0 <= lngf <= 180.0 and -90.0 <= latf <= 90.0):
+                self._send(400, {"error": "经纬度超出有效范围"})
+                return
+            fields = {"经度": str(lngf), "纬度": str(latf),
+                      "位置地图": f"{lngf},{latf}",
+                      "定位来源": (data.get("source") or "现场定位")}
+            if data.get("desc"):
+                fields["位置描述"] = str(data["desc"]).strip()
+            s, o = update_record(MASTER, rid, fields)
+            if s // 100 != 2 or o.get("code") != 0:
+                if _rid_missing(o):
+                    drop_cache(MASTER)
+                    refresh_async(MASTER)
+                    self._send(409, {"error": "这根杆在飞书里已被删除，主数据正在重新同步，请刷新后重新选择"})
+                    return
+                self._send(500, {"error": o.get("msg") or "写入失败", "detail": o})
+                return
+            self._send(200, {"ok": True, "record_id": rid, "lng": lngf, "lat": latf})
+            return
+        # 新增电杆 + 同时打定位：补录图纸漏登的直线杆（如闩门线 #7）
+        if u.path == "/api/poles/create-locate":
+            bureau = str(data.get("bureau", "")).strip()
+            area = str(data.get("area", "")).strip()
+            office = str(data.get("office", "")).strip()
+            sub = str(data.get("sub", "")).strip()
+            line = str(data.get("line", "")).strip()
+            taqu = str(data.get("taqu", "")).strip()
+            branch = str(data.get("branch", "")).strip()
+            digits = str(data.get("digits", "")).strip()
+            if not sub or not line:
+                self._send(400, {"error": "请先选择变电站和线路"})
+                return
+            try:
+                auto = int(data.get("auto", 1))
+            except Exception:
+                auto = 1
+            pole_no = build_pole_no(sub, line, taqu, digits, branch=branch) if auto else ""
+            if not pole_no:
+                pole_no = str(data.get("pole_no", "")).strip()
+            if not pole_no:
+                self._send(400, {"error": "请填写杆号，如 7"})
+                return
+            dup = find_pole_by_no(pole_no)
+            if dup:
+                refresh_async(MASTER)   # 缓存可能滞后（刚在飞书里删过记录），顺手刷新
+                self._send(409, {"error": "该编号已存在：%s，请直接从列表里选它" % pole_no,
+                                 "dup": True, "record_id": dup})
+                return
+            lng, lat = data.get("lng"), data.get("lat")
+            if lng in (None, "") or lat in (None, ""):
+                self._send(400, {"error": "请在地图上选点或使用当前位置"})
+                return
+            try:
+                lngf, latf = float(lng), float(lat)
+            except Exception:
+                self._send(400, {"error": "经纬度格式不正确"})
+                return
+            if not (-180.0 <= lngf <= 180.0 and -90.0 <= latf <= 90.0):
+                self._send(400, {"error": "经纬度超出有效范围"})
+                return
+            fields = {"电杆编号": pole_no, "变电站": sub, "线路": line,
+                      "电杆状态": "正常运行",
+                      "经度": str(lngf), "纬度": str(latf),
+                      "位置地图": "%s,%s" % (lngf, latf),
+                      "定位来源": str(data.get("source") or "现场定位·新增电杆"),
+                      "首次录入日期": today_ms()}
+            tg = _taqu_ok(taqu)
+            if tg:
+                fields["台区"] = tg
+            # 供电所全称：优先用前端选中的组织三级拼装，否则从同线路已有杆继承
+            org_full = org_join(bureau, area, office) or inherit_area(sub, line)
+            if org_full:
+                fields["供电所全称"] = org_full
+            if data.get("desc"):
+                fields["位置描述"] = str(data["desc"]).strip()
+            s2, o2 = create_record(MASTER, fields)
+            if s2 // 100 != 2 or o2.get("code") != 0:
+                self._send(500, {"error": o2.get("msg") or "新增失败", "detail": o2})
+                return
+            rid = ((o2.get("data") or {}).get("record") or {}).get("record_id")
+            self._send(200, {"ok": True, "created": True, "record_id": rid,
+                             "pole_no": pole_no, "lng": lngf, "lat": latf})
+            return
+        # 手动同步电杆主数据：有人在飞书里直接改/删过数据后用（全量重拉，约 10 秒）
+        if u.path == "/api/poles/sync":
+            t0 = time.time()
+            items = _fetch_all(MASTER)
+            if not items:
+                self._send(500, {"error": "同步失败：没取到数据，请检查飞书凭证或网络"})
+                return
+            ts = time.time()
+            with _CACHE_LOCK:
+                _list_cache[MASTER] = (ts, items)
+            _save_disk(MASTER, ts, items)
+            _STALE.discard(MASTER)
+            self._send(200, {"ok": True, "total": len(items),
+                             "seconds": round(time.time() - t0, 1)})
+            return
         if u.path == "/api/jobs":
             rid = data.get("pole_record_id", "")
             if not rid:
@@ -898,4 +1519,15 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"[修剪作业录入] serving on http://0.0.0.0:{PORT}")
+    # 启动即后台预热电杆主表缓存：用户第一次点级联下拉就是毫秒级，
+    # 而不是在请求里干等 10 页飞书（约 15s）。预热有磁盘缓存兜底，重启用不上。
+    def _warm():
+        for tb in (MASTER, SURVEY):
+            try:
+                n = len(list_all(tb))
+                fmap(tb)     # 字段名→id 映射也一起预热，否则重启后首次请求仍要等 ~1s
+                print(f"[预热] {tb}: {n} 条")
+            except Exception as e:
+                sys.stderr.write(f"[预热失败] {tb}: {e}\n")
+    threading.Thread(target=_warm, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

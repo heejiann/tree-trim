@@ -163,6 +163,13 @@
   #photoViewer .pv-close{position:absolute;top:14px;right:18px;color:#fff;font-size:34px;line-height:1;cursor:pointer;z-index:1}
   #photoViewer .pv-nav{position:absolute;bottom:18px;left:0;right:0;display:flex;align-items:center;justify-content:center;gap:26px;color:#fff;font-size:15px}
   #photoViewer .pv-nav span{cursor:pointer;user-select:none;padding:6px 16px;background:rgba(255,255,255,.15);border-radius:20px}
+  .photo-prev{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .photo-prev:empty{display:none}
+  .photo-prev .pp{position:relative;width:72px;height:72px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  .photo-prev .pp img{width:100%;height:100%;object-fit:cover;display:block}
+  .photo-prev .pp .x{position:absolute;top:0;right:0;width:22px;height:22px;line-height:20px;text-align:center;background:rgba(0,0,0,.55);color:#fff;font-size:13px;cursor:pointer;border-radius:0 0 0 8px}
+  .photo-hint{font-size:12px;color:var(--mut);margin-top:4px}
+  .photo-hint:empty{display:none}
 
   /* 地图选点弹窗 */
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
@@ -215,8 +222,8 @@
         </div>
         <div class="home-card" onclick="showPage('newpole')">
           <div class="icon">📍</div>
-          <h3>新增电杆</h3>
-          <p>录入新电杆编号与地图定位，建立电杆档案</p>
+          <h3>新增电杆定位</h3>
+          <p>选已有电杆补录现场定位；一条线攒够锚点即可反推全线</p>
         </div>
         <div class="home-card" onclick="showPage('accept')">
           <div class="icon">✅</div>
@@ -264,16 +271,13 @@
       <div class="wrap">
         <div class="card" id="searchCard">
           <div class="step">第 1 步 · 查找电杆</div>
-          <div class="row">
-            <input id="q" placeholder="输入电杆编号查找" onkeydown="if(event.key==='Enter')searchPoles()">
-            <button class="btn-sm" style="flex:0 0 88px" onclick="searchPoles()">搜索</button>
-          </div>
+          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <div id="job_cas"></div>
           <div id="recentWrap" class="hidden">
             <div class="sub-t">最近选择（最多 4 个，点一下直接选）</div>
             <div id="recentPoles"></div>
           </div>
-          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆」建档 →</span>
-          <div id="poleList"></div>
+          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆定位」选杆 →</span>
         </div>
 
         <div class="card hidden" id="jobCard">
@@ -320,12 +324,9 @@
       <div class="wrap">
         <div class="card" id="sSearchCard">
           <div class="step">第 1 步 · 查找电杆</div>
-          <div class="row">
-            <input id="sq" placeholder="输入电杆编号查找" onkeydown="if(event.key==='Enter')searchSurveyPoles()">
-            <button class="btn-sm" style="flex:0 0 88px" onclick="searchSurveyPoles()">搜索</button>
-          </div>
-          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆」建档 →</span>
-          <div id="spoleList"></div>
+          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <div id="sv_cas"></div>
+          <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆定位」选杆 →</span>
         </div>
 
         <div class="card hidden" id="surveyCard">
@@ -346,39 +347,41 @@
           </select>
           <label>备注</label>
           <textarea id="s_note" placeholder="如 停车困难、树木大约高度、需协调事宜"></textarea>
-          <label>现场照片（拍照 / 选照片）</label>
-          <input id="s_photo" type="file" accept="image/*" multiple>
+          <label>现场照片（拍照 / 选照片，可一次多选）</label>
+          <input id="s_photo" type="file" accept="image/*" multiple onchange="sPhotoChanged(this)">
+          <div id="s_photo_prev" class="photo-prev"></div>
+          <div class="photo-hint" id="s_photo_count"></div>
           <button class="btn-primary" style="margin-top:14px" onclick="submitSurvey()">提交勘察</button>
           <button class="btn-ghost" style="margin-top:8px" onclick="resetSurvey()">重新选择电杆</button>
         </div>
       </div>
     </div>
 
-    <!-- 板块：新增电杆（独立建档，不再嵌在作业记录里） -->
+    <!-- 板块：新增电杆定位（从电杆主表选杆 + 补录现场定位） -->
     <div id="poleSection" class="hidden">
       <div class="wrap">
         <div class="card" id="poleFormCard">
-          <div class="step">新增电杆 · 录入编号与定位</div>
-          <label>电杆编号 *</label>
-          <input id="np_no" placeholder="10kV电站F1什么线#01杆">
-          <label>定位 *</label>
+          <div class="step">新增电杆定位 · 选杆 → 加定位</div>
+          <div style="margin:6px 0 2px">
+            <button class="btn-sm" style="width:auto" id="loc_sync_btn" onclick="syncPoles()">🔄 同步电杆主数据</button>
+            <span style="font-size:12px;color:#8a8f99">在飞书里改过杆？点它刷新（约20秒）</span>
+          </div>
+          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <div id="loc_cas"></div>
+          <label>⑧ 定位 *</label>
           <button class="btn-sm" style="width:auto" onclick="openMap()">选择定位（地图选点）</button>
           <div class="locline" id="locline">未选择定位</div>
-          <label>位置描述</label>
-          <input id="np_desc" placeholder="如 XX路XX号旁">
-          <label>所属供电所（默认：佛山 / 三水 / 乐平）</label>
-          <select id="np_area1" onchange="fillArea2()"><option value="">请选择市局</option></select>
-          <select id="np_area2" onchange="fillArea3()" style="margin-top:10px"><option value="">请选择区/县供电局</option></select>
-          <select id="np_area3" style="margin-top:10px"><option value="">请选择供电所（无则选"无"）</option></select>
-          <button class="btn-primary" style="margin-top:14px" onclick="submitNewPole()">新建电杆</button>
-          <button class="btn-ghost" style="margin-top:8px" onclick="clearNewPoleForm()">清空重填</button>
+          <label>位置描述（选填，留空则保留原描述）</label>
+          <input id="loc_desc" placeholder="如 XX路XX号旁">
+          <button class="btn-primary" style="margin-top:14px" onclick="submitLocate()">保存定位</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="resetLocForm()">清空重选</button>
         </div>
 
         <div class="card hidden" id="npDoneCard">
-          <div class="step">✅ 电杆已建档</div>
+          <div class="step">✅ 定位已保存</div>
           <div id="np_done_info" style="font-size:14px;line-height:1.7"></div>
-          <button class="btn-primary" style="margin-top:14px" onclick="goJobFromNewPole()">去录入该杆作业 →</button>
-          <button class="btn-ghost" style="margin-top:8px" onclick="continueNewPole()">继续新增下一根</button>
+          <button class="btn-primary" style="margin-top:14px" onclick="continueLocate()">继续给下一根杆定位</button>
+          <button class="btn-ghost" style="margin-top:8px" onclick="goJobFromNewPole()">去录入该杆作业 →</button>
         </div>
       </div>
     </div>
@@ -539,15 +542,15 @@ function showPage(page, silent){
     backBtn.classList.remove('hidden');
     topbar.classList.add('sm');
     sub.textContent = '作业记录 · 搜杆 / 录作业';
-    document.getElementById('poleList').innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">输入电杆编号后点「搜索」</div>';
+    if(!_cas['job']) initJobSearch();
     renderRecent();
   } else if(page==='newpole'){
     pole.classList.remove('hidden');
     backBtn.classList.remove('hidden');
     topbar.classList.add('sm');
-    sub.textContent = '新增电杆 · 录编号 / 地图定位 / 建档';
+    sub.textContent = '新增电杆定位 · 选杆 / 定位 / 保存';
     hide('npDoneCard'); show('poleFormCard');
-    initArea();
+    if(!_cas['loc']) initNewPole(); else resetLocForm();
   } else if(page==='accept'){
     accept.classList.remove('hidden');
     backBtn.classList.remove('hidden');
@@ -560,7 +563,7 @@ function showPage(page, silent){
     backBtn.classList.remove('hidden');
     topbar.classList.add('sm');
     sub.textContent = '勘察记录 · 搜杆 / 录勘察';
-    document.getElementById('spoleList').innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">输入电杆编号后点「搜索」</div>';
+    if(!_cas['sv']) initSurveySearch();
   }
   if(!silent) hideDetail();
 }
@@ -580,6 +583,7 @@ async function loadMapData(){
     const r = await fetch('/api/poles/all', {credentials:'same-origin'});
     const d = await r.json();
     _allPoles = d.items || [];
+    window._poleTotal = d.total || _allPoles.length;   // 主表全部杆数（含未定位）
     _poleById = {};
     _allPoles.forEach(p=>_poleById[p.record_id]=p);
     buildSearchOptions();
@@ -596,7 +600,7 @@ function renderMapPoles(list){
     _markers[p.record_id]=m;
     shown++;
   });
-  document.getElementById('mapCnt').textContent = shown + ' / ' + _allPoles.length + ' 杆';
+  document.getElementById('mapCnt').textContent = '已定位 ' + shown + ' / 共 ' + (window._poleTotal||_allPoles.length) + ' 杆';
 }
 function fitToPoles(list){
   const pts = (list||[]).filter(p=>p.lat!=null&&p.lng!=null).map(p=>[p.lat,p.lng]);
@@ -818,29 +822,8 @@ function gcj2bd(lng,lat){let x=lng,y=lat,z=Math.sqrt(x*x+y*y)+0.00002*Math.sin(y
 /* ===== 作业录入（原逻辑） ===== */
 function show(id){document.getElementById(id).classList.remove('hidden');}
 function hide(id){document.getElementById(id).classList.add('hidden');}
-function initArea(){
-  const s1=document.getElementById('np_area1');
-  s1.innerHTML='<option value="">请选择市局</option>';
-  Object.keys(AREA_TREE).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;s1.appendChild(o);});
-  s1.value="佛山供电局";
-  fillArea2();
-}
-function fillArea2(){
-  const s1=document.getElementById('np_area1'),s2=document.getElementById('np_area2'),s3=document.getElementById('np_area3');
-  s2.innerHTML='<option value="">请选择区/县供电局</option>'; s3.innerHTML='<option value="">请选择供电所</option>';
-  const l2=AREA_TREE[s1.value]||{};
-  Object.keys(l2).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s2.appendChild(o);});
-  if(l2["三水供电局"]!==undefined) s2.value="三水供电局";
-  fillArea3();
-}
-function fillArea3(){
-  const s1=document.getElementById('np_area1'),s2=document.getElementById('np_area2'),s3=document.getElementById('np_area3');
-  s3.innerHTML='<option value="">请选择供电所</option>';
-  const list=(AREA_TREE[s1.value]&&AREA_TREE[s1.value][s2.value])||[];
-  list.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s3.appendChild(o);});
-  if(list.length===0){const n=document.createElement('option');n.value="无";n.textContent="无";s3.appendChild(n);s3.value="无";}
-  else if(list.includes("乐平供电所")) s3.value="乐平供电所";
-}
+/* 注：原先的 initArea/fillArea2/fillArea3（旧「新增电杆」的市局/区局/供电所下拉）
+   已被通用七级级联组件取代，相关 DOM 与函数均已移除。 */
 
 /* ===== 验收导出板块 ===== */
 let _acTimer=null;
@@ -984,33 +967,416 @@ function renderRecent(){
     box.appendChild(el);
   });
 }
-async function searchPoles(){
-  const q=document.getElementById('q').value.trim();
-  const box=document.getElementById('poleList'); box.innerHTML='';
-  if(!q){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">请输入电杆编号再搜索</div>'; return; }
-  const r=await fetch('/api/poles?q='+encodeURIComponent(q), {credentials:'same-origin'});
-  const d=await r.json();
-  if(!d.items||!d.items.length){box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">无匹配电杆</div>';return;}
-  const MAX=50;
-  d.items.slice(0,MAX).forEach(p=>{
-    const el=document.createElement('div'); el.className='pole';
-    el.innerHTML=`<div><div class="no">${esc(p.pole_no)}</div><div class="d">${esc(p.desc||'(无描述)')}</div></div><div class="d">选择 ›</div>`;
-    el.onclick=()=>selectPole(p.record_id,p.pole_no);
-    box.appendChild(el);
-  });
-  if(d.items.length>MAX) box.insertAdjacentHTML('beforeend','<div style="color:#8a8f99;font-size:12px;margin-top:8px">仅显示前 '+MAX+' 个，请输入更精确编号（如 #03 杆）</div>');
+function initJobSearch(){
+  mountCascade('job', {mountId:'job_cas', allowAllTaqu:true, maxList:200,
+    kwPlaceholder:'知道杆号可在这里直搜（如 良登线#12）；也可输入关键字过滤下面的列表',
+    onPick:(rid,no)=>{ if(rid) selectPole(rid,no); }});
 }
-/* ===== 新增电杆板块（独立建档） ===== */
-function clearNewPoleForm(){
-  ['np_no','np_desc'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+/* ============ 通用七级级联选杆组件（新增定位 / 作业记录 / 勘察记录 三处复用） ============
+   供电局 → 区局 → 供电所 → 变电站 → 线路 → 台区 → 电杆
+   前三级用本地 AREA_TREE（零请求，秒出）；后四级走后端 /api/poles/pick（已带缓存，毫秒级）。
+   用法：mountCascade('loc', {mountId:'loc_cas', allowNewPole:true, allowNewTaqu:true,
+                             allowAllTaqu:true, onPick:(rid,no)=>{...}})
+   ============ */
+const CASC_KEYS = ['bureau','area','office','sub','line','taqu'];
+const CASC_LABELS = ['① 供电局','② 区局','③ 供电所','④ 变电站','⑤ 线路','⑥ 台区'];
+const CASC_PH = ['供电局','区局','供电所','变电站','线路','台区'];
+const CASC_LSKEY = 'ct_casc_last';       // 记住上次选的供电所，下次直接跳到变电站
+// 默认组织三级（没选择过时的兜底）：佛山供电局 / 南海供电局 / 丹灶供电所
+const CASC_DEFAULT_ORG = {bureau:'佛山供电局', area:'南海供电局', office:'丹灶供电所'};
+const _cas = {};
+
+function _casLS(){ try{ return JSON.parse(localStorage.getItem(CASC_LSKEY)||'{}'); }catch(e){ return {}; } }
+/* 组织三级是否组成一条合法链路（防止 localStorage 里的脏值把人带沟里） */
+function casOrgOK(o){
+  if(!o || !o.bureau || !o.area || !o.office) return false;
+  const l2=AREA_TREE[o.bureau];
+  if(!l2 || !Array.isArray(l2[o.area])) return false;
+  return l2[o.area].indexOf(o.office) >= 0;
+}
+function casVal(p,k){ const e=document.getElementById(p+'_'+k); return e? e.value : ''; }
+function casSetVal(p,k,v){ const e=document.getElementById(p+'_'+k); if(e) e.value=v; }
+function casOrgQ(p){ return {bureau:casVal(p,'bureau'), area:casVal(p,'area'), office:casVal(p,'office')}; }
+function casOptLabel(pk,v){
+  if(v==='__all__') return '（全部台区）';
+  if(v==='__newtaqu__') return '＋ 新增台区…';
+  return esc(v);
+}
+
+function casHTML(p,o){
+  o=o||{};
+  let h='';
+  for(let i=0;i<6;i++){
+    const k=CASC_KEYS[i];
+    h+='<label>'+CASC_LABELS[i]+'</label>'
+      +'<select id="'+p+'_'+k+'" onchange="casChange(\''+p+'\','+i+')"><option value="">请选择'+CASC_PH[i]+'</option></select>';
+    if(k==='taqu' && o.allowNewTaqu){
+      h+='<div id="'+p+'_newtaqu_wrap" style="display:none;margin-top:8px">'
+        +'<input id="'+p+'_newtaqu" placeholder="新台区名，如：新村（≤14字，不含 #/台变）">'
+        +'<button class="btn-sm" style="width:auto;margin-top:6px" onclick="casApplyNewTaqu(\''+p+'\')">确定新增台区</button>'
+        +'</div>';
+    }
+  }
+  h+='<label>⑦ 电杆 *</label>'
+    +'<input id="'+p+'_kw" placeholder="'+(o.kwPlaceholder||'可输入杆号过滤，如 12')+'" oninput="casKw(\''+p+'\')">'
+    +'<select id="'+p+'_pole" size="6" style="height:158px" onchange="casPicked(\''+p+'\')"></select>';
+  if(o.allowNewPole){
+    h+='<div id="'+p+'_newpole_wrap" style="display:none">'
+      +'<label>支线（可选，选不到就手填）</label>'
+      +'<select id="'+p+'_npbranch" onchange="casBranchPicked(\''+p+'\')"><option value="">不使用支线</option></select>'
+      +'<input id="'+p+'_npbranch_new" placeholder="新支线名，如：三眼桥（自动补「支线」）" oninput="casBranchTyping(\''+p+'\')" style="margin-top:6px">'
+      +'<label style="margin-top:10px">新增电杆编号（自动拼接，可手改）</label>'
+      +'<input id="'+p+'_newpole_no" oninput="casNewPoleEdit(\''+p+'\')">'
+      +'<div class="locline" id="'+p+'_newpole_hint"></div>'
+      +'</div>';
+  }
+  h+='<div class="locline" id="'+p+'_sel">尚未选择电杆</div>';
+  return h;
+}
+
+function mountCascade(p, opts){
+  const o=opts||{};
+  _cas[p]={opts:o, poles:[], rid:null, newMode:false, newAuto:true};
+  const host=document.getElementById(o.mountId||(p+'_cas'));
+  if(host) host.innerHTML=casHTML(p,o);
+  // 优先用上次选的所；没有历史（或历史已失效）就落到默认：佛山供电局 / 南海供电局 / 丹灶供电所
+  const last=_casLS();
+  const pref = casOrgOK(last) ? last : CASC_DEFAULT_ORG;
+  if(casOrgOK(pref)){
+    // 自动填好前三级，直接加载第四级「变电站」（现场通常天天同一个所）
+    casFillOrg(p,0); casSetVal(p,'bureau',pref.bureau);
+    casFillOrg(p,1); casSetVal(p,'area',pref.area);
+    casFillOrg(p,2); casSetVal(p,'office',pref.office);
+    casLoad(p,3);
+  }else{
+    casLoad(p,0);
+  }
+}
+
+async function casFetch(q){
+  const qs=Object.keys(q).filter(k=>q[k]!==undefined && q[k]!==null && String(q[k])!=='')
+            .map(k=>k+'='+encodeURIComponent(q[k])).join('&');
+  const r=await fetch('/api/poles/pick'+(qs?'?'+qs:''),{credentials:'same-origin'});
+  return await r.json();
+}
+
+/* 加载第 i 级（0-5 下拉，6=电杆列表）。会先把 i 之后的所有级清空 */
+async function casLoad(p, i){
+  const s=_cas[p]; if(!s) return;
+  casPoles(p, []);
+  casClearSel(p);
+  _hx(p+'_newpole_wrap', false);
+  const a=document.getElementById(p+'_newpole_no'); if(a) a.value='';
+  if(i>=6){ await casLoadPoles(p); return; }
+  for(let j=i;j<6;j++){
+    const e=document.getElementById(p+'_'+CASC_KEYS[j]);
+    if(e){ e.innerHTML='<option value="">请选择'+CASC_PH[j]+'</option>'; e.disabled=(j>i); }
+  }
+  if(i>2) _hx(p+'_newtaqu_wrap', false);
+  if(i<3){ casFillOrg(p,i); return; }
+  const pk=CASC_KEYS[i];
+  const el=document.getElementById(p+'_'+pk);
+  if(!el) return;
+  el.innerHTML='<option value="">加载中…</option>'; el.disabled=true;
+  const q=casOrgQ(p);
+  if(i>=4) q.sub=casVal(p,'sub');
+  if(i>=5) q.line=casVal(p,'line');
+  let d;
+  try{ d=await casFetch(q); }
+  catch(e){ el.innerHTML='<option value="">加载失败，请重试</option>'; return; }
+  let items=(d.items||[]).slice();
+  if(pk==='taqu'){
+    if(s.opts.allowAllTaqu) items=['__all__'].concat(items);
+    if(s.opts.allowNewTaqu) items=items.concat(['__newtaqu__']);
+  }
+  el.innerHTML='<option value="">请选择'+CASC_PH[i]+'</option>'
+    +items.map(v=>'<option value="'+esc(v)+'">'+casOptLabel(pk,v)+'</option>').join('');
+  el.disabled=false;
+  if(pk==='taqu' && s.opts.allowAllTaqu){ el.value='__all__'; await casLoad(p,6); }
+}
+
+function casChange(p, i){
+  const s=_cas[p]; if(!s) return;
+  const k=CASC_KEYS[i];
+  if(k==='office'){
+    const o=_casLS();
+    o.bureau=casVal(p,'bureau'); o.area=casVal(p,'area'); o.office=casVal(p,'office');
+    try{ localStorage.setItem(CASC_LSKEY, JSON.stringify(o)); }catch(e){}
+  }
+  if(k==='taqu'){
+    const t=casVal(p,'taqu');
+    if(t==='__newtaqu__'){
+      _hx(p+'_newtaqu_wrap', true);
+      casPoles(p, []); casClearSel(p);
+      return;
+    }
+    _hx(p+'_newtaqu_wrap', false);
+  }
+  casLoad(p, i+1);
+}
+
+async function casLoadPoles(p){
+  const s=_cas[p]; if(!s) return;
+  const el=document.getElementById(p+'_pole'); if(!el) return;
+  if(!casVal(p,'line')){ casPoles(p, []); return; }
+  el.innerHTML='<option value="">加载中…</option>';
+  const q=casOrgQ(p); q.sub=casVal(p,'sub'); q.line=casVal(p,'line');
+  const t=casVal(p,'taqu');
+  if(t && t!=='__all__' && t!=='__newtaqu__') q.taqu=t; else q.list='1';
+  try{ const d=await casFetch(q); casPoles(p, d.items||[]); }
+  catch(e){ el.innerHTML='<option value="">加载失败</option>'; }
+}
+
+function casPoles(p, arr){ const s=_cas[p]; if(!s) return; s.poles=arr||[]; casRender(p); }
+
+/* 杆号输入框：还没选到线路时，直接按编号全局搜（现场知道杆号时最快） */
+function casKw(p){
+  const s=_cas[p]; if(!s) return;
+  clearTimeout(s._kwTimer);
+  const kw=(document.getElementById(p+'_kw').value||'').trim();
+  if(kw.length>=2 && !casVal(p,'line')){
+    s._kwTimer=setTimeout(()=>casGlobalSearch(p,kw),300);
+    return;
+  }
+  casRender(p);
+}
+async function casGlobalSearch(p, kw){
+  const s=_cas[p]; if(!s) return;
+  try{
+    const r=await fetch('/api/poles?q='+encodeURIComponent(kw),{credentials:'same-origin'});
+    const d=await r.json();
+    if(!_cas[p]) return;
+    s.poles=d.items||[];
+    casRender(p);
+  }catch(e){}
+}
+
+function casRender(p){
+  const s=_cas[p]; if(!s) return;
+  const el=document.getElementById(p+'_pole'); if(!el) return;
+  const kwEl=document.getElementById(p+'_kw');
+  const kwv=kwEl?(kwEl.value||'').trim():'';
+  const kw=kwv.toLowerCase();
+  let list=s.poles||[];
+  if(kw) list=list.filter(x=>String(x.pole_no||'').toLowerCase().includes(kw));
+  const MAX=s.opts.maxList||400;
+  let h='';
+  if(s.opts.allowNewPole)
+    h+='<option value="__newpole__">＋ 新增电杆'+(kwv?'「'+esc(kwv)+'」':'')+'（图纸没登记的杆）</option>';
+  if(list.length){
+    h+=list.slice(0,MAX).map(x=>'<option value="'+esc(x.record_id)+'">'+esc(x.pole_no)+(x.lng!=null?' ✓已定位':'')+'</option>').join('');
+    if(list.length>MAX) h+='<option value="" disabled>…还有 '+(list.length-MAX)+' 根，请再输入杆号过滤</option>';
+  }else{
+    h+='<option value="" disabled>'+(s.poles.length?'———— 没有匹配的电杆 ————':'———— 请先在上面选到线路 ————')+'</option>';
+  }
+  el.innerHTML=h;
+  // 重建后浏览器会跳到第一项，必须恢复选中状态，否则误判成「新增」
+  if(s.newMode) el.value='__newpole__';
+  else if(s.rid && list.some(x=>x.record_id===s.rid)) el.value=s.rid;
+  else if(s.rid){ s.rid=null; casSetInfo(p,null); if(s.opts.onPick) s.opts.onPick(null,''); }
+  else el.value='';
+  if(s.newMode) casPreviewNo(p);
+}
+
+function casPicked(p){
+  const s=_cas[p]; if(!s) return;
+  const el=document.getElementById(p+'_pole');
+  if(el.value==='__newpole__'){
+    s.rid=null; s.newMode=true; s.newAuto=true;
+    _hx(p+'_newpole_wrap', true);
+    const bn=document.getElementById(p+'_npbranch_new'); if(bn) bn.value='';
+    casLoadBranches(p);
+    casInfo(p,'<b style="color:#1a7f5a">将新增一根电杆</b>（在下方确认杆号，支线可选）');
+    casPreviewNo(p);
+    if(s.opts.onPick) s.opts.onPick(null,'');
+    return;
+  }
+  s.newMode=false; _hx(p+'_newpole_wrap', false);
+  const item=(s.poles||[]).find(x=>x.record_id===el.value)||null;
+  s.rid=item?item.record_id:null;
+  casSetInfo(p, item);
+  if(s.opts.onPick) s.opts.onPick(s.rid, item?item.pole_no:'');
+}
+
+function casClearSel(p){
+  const s=_cas[p]; if(!s) return;
+  s.rid=null; s.newMode=false; s.newAuto=true;
+  casSetInfo(p, null);
+  if(s.opts.onPick) s.opts.onPick(null,'');
+}
+function casInfo(p, html){ const e=document.getElementById(p+'_sel'); if(e) e.innerHTML=html; }
+function casSetInfo(p, item){
+  const s=_cas[p];
+  if(item===undefined) item=(s.poles||[]).find(x=>x.record_id===s.rid)||null;
+  casInfo(p, item? ('已选：<b>'+esc(item.pole_no)+'</b>'+(item.lng!=null?'（原有定位，保存将覆盖）':'（尚无定位）')) : '尚未选择电杆');
+}
+
+function casFillOrg(p, i){
+  const el=document.getElementById(p+'_'+CASC_KEYS[i]); if(!el) return;
+  let list=[];
+  if(i===0) list=Object.keys(AREA_TREE);
+  else if(i===1) list=Object.keys(AREA_TREE[casVal(p,'bureau')]||{});
+  else list=(AREA_TREE[casVal(p,'bureau')]||{})[casVal(p,'area')]||[];
+  el.innerHTML='<option value="">请选择'+CASC_PH[i]+'</option>'
+    +list.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+  el.disabled=!list.length;
+}
+
+/* 支线候选：该线路下图纸里已有的支线名（新增漏登的支线杆时直接选） */
+async function casLoadBranches(p){
+  const sel=document.getElementById(p+'_npbranch'); if(!sel) return;
+  const keep=sel.value;
+  sel.innerHTML='<option value="">不使用支线</option>';
+  if(!casVal(p,'line')) return;
+  const q=casOrgQ(p); q.sub=casVal(p,'sub'); q.line=casVal(p,'line');
+  try{
+    const r=await fetch('/api/poles/branches?'+Object.keys(q).filter(k=>q[k])
+      .map(k=>k+'='+encodeURIComponent(q[k])).join('&'),{credentials:'same-origin'});
+    const d=await r.json();
+    const cur=sel; const now=document.getElementById(p+'_npbranch');
+    (d.branches||[]).forEach(b=>{
+      const op=document.createElement('option'); op.value=b; op.textContent=b;
+      now.appendChild(op);
+    });
+    if(keep) now.value=keep;
+  }catch(e){ /* 加载失败就只留「不使用支线」+ 手填 */ }
+}
+function casBranchPicked(p){
+  const s=_cas[p]; if(!s) return;
+  const bn=document.getElementById(p+'_npbranch_new'); if(bn) bn.value='';
+  casPreviewNo(p);
+}
+let _brTimer={};
+function casBranchTyping(p){
+  const s=_cas[p]; if(!s) return;
+  clearTimeout(_brTimer[p]);
+  _brTimer[p]=setTimeout(()=>casPreviewNo(p),300);
+}
+
+/* 新增电杆编号预览：交给后端按与已导入 4500+ 条相同的规则拼接，避免格式不一致 */
+async function casPreviewNo(p){
+  const s=_cas[p]; if(!s) return;
+  const inp=document.getElementById(p+'_newpole_no'), hint=document.getElementById(p+'_newpole_hint');
+  if(!inp||!hint) return;
+  if(!s.newAuto && (inp.value||'').trim()) return;   // 用户手改过就不覆盖
+  let taqu=casVal(p,'taqu');
+  if(taqu==='__all__'||taqu==='__newtaqu__') taqu='';
+  const bsel=document.getElementById(p+'_npbranch');
+  const bnew=document.getElementById(p+'_npbranch_new');
+  const branch=(bnew&&bnew.value.trim()) ? bnew.value.trim() : (bsel?bsel.value:'');
+  const kwEl=document.getElementById(p+'_kw');
+  const digits=kwEl?(kwEl.value||'').trim():'';
+  try{
+    const r=await fetch('/api/poles/preview-no?sub='+encodeURIComponent(casVal(p,'sub'))
+      +'&line='+encodeURIComponent(casVal(p,'line'))
+      +'&taqu='+encodeURIComponent(taqu)
+      +'&branch='+encodeURIComponent(branch)
+      +'&digits='+encodeURIComponent(digits),{credentials:'same-origin'});
+    const d=await r.json();
+    inp.value=d.pole_no||'';
+    if(d.dup) hint.innerHTML='<b style="color:#c0392b">⚠ 该编号已存在</b>，请直接在上面列表里选它，不要新增';
+    else if(d.pole_no) hint.innerHTML='将新建：<b>'+esc(d.pole_no)+'</b>'
+      +(s.newAuto?'':'　<span style="color:#1a7f5a;cursor:pointer;text-decoration:underline" onclick="casResetNo(\''+p+'\')">恢复自动拼接</span>');
+    else hint.textContent='请在上面 ⑦ 的输入框里填杆号（如 7）';
+  }catch(e){ hint.textContent='编号预览失败，可手动填写'; }
+}
+function casNewPoleEdit(p){ const s=_cas[p]; if(s) s.newAuto=false; }
+async function casResetNo(p){ const s=_cas[p]; if(!s) return; s.newAuto=true; await casPreviewNo(p); }
+
+/* 台区顺手新建：新台区名只写在新杆上，杆一建好它就自动出现在台区下拉里（下拉是从杆表汇总的） */
+function casApplyNewTaqu(p){
+  const v=(document.getElementById(p+'_newtaqu').value||'').trim();
+  if(!v){ toast('请输入台区名'); return; }
+  if(v.length>14 || /[#＃]|公用|台变|配变|电站|箱变|开关站/.test(v)){ toast('台区名不合规：≤14字，且不含 #/台变/公用 等'); return; }
+  const ts=document.getElementById(p+'_taqu');
+  [...ts.options].forEach(o=>{ if(o.value===v) o.remove(); });
+  const op=document.createElement('option'); op.value=v; op.textContent=v+'（新）';
+  const lastOpt=ts.options[ts.options.length-1];
+  ts.insertBefore(op, (lastOpt && lastOpt.value==='__newtaqu__')? lastOpt : null);
+  ts.value=v;
+  _hx(p+'_newtaqu_wrap', false);
+  document.getElementById(p+'_newtaqu').value='';
+  toast('已新增台区「'+v+'」，接着填它的电杆杆号');
+  casLoad(p, 6);
+}
+
+/* ===== 新增电杆定位板块（从主表选杆 + 补录定位） ===== */
+function _hx(id,show){const e=document.getElementById(id);if(e)e.style.display=show?'block':'none';}
+function initNewPole(){
+  mountCascade('loc', {mountId:'loc_cas', allowNewPole:true, allowNewTaqu:true, allowAllTaqu:true,
+    kwPlaceholder:'可输入杆号过滤，如 12；列表里找不到就直接新增',
+    onPick:(rid,no)=>{ window._locRid=rid; }});
+}
+/* 手动同步：有人在飞书里直接改/删过电杆时用 */
+async function syncPoles(){
+  const b=document.getElementById('loc_sync_btn');
+  if(b){ b.disabled=true; b.textContent='同步中…（约20秒）'; }
+  try{
+    const r=await fetch('/api/poles/sync',{method:'POST',credentials:'same-origin'});
+    const d=await r.json();
+    if(d.ok){
+      toast('已同步 '+d.total+' 条电杆主数据 ✓');
+      if(casVal('loc','line')) casLoad('loc',6);
+      else if(casVal('loc','office')) casLoad('loc',3);
+    }else{ toast('同步失败: '+(d.error||'')); }
+  }catch(e){ toast('同步失败：网络错误'); }
+  if(b){ b.disabled=false; b.textContent='🔄 同步电杆主数据'; }
+}
+function resetLocForm(){
+  ['loc_kw','loc_desc'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   const ll=document.getElementById('locline'); if(ll) ll.textContent='未选择定位';
-  window._lat=null;window._lng=null;_pick=null;
-  initArea();
+  window._lat=null; window._lng=null; _pick=null;
+  casLoad('loc', 3);   // 保留供电局/区局/供电所，从变电站重新选
 }
-function continueNewPole(){ hide('npDoneCard'); show('poleFormCard'); clearNewPoleForm(); const e=document.getElementById('np_no'); if(e) e.focus(); }
+function continueLocate(){ hide('npDoneCard'); show('poleFormCard'); resetLocForm(); }
 function goJobFromNewPole(){
   showPage('job');
   if(window._npLast) selectPole(window._npLast.rid, window._npLast.no);
+}
+async function submitLocate(){
+  if(window._lat==null||window._lng==null){ toast('请先选择定位'); return; }
+  const s=_cas['loc']; if(!s){ toast('页面未初始化，请刷新'); return; }
+  const org=casOrgQ('loc');
+  const sub=casVal('loc','sub'), line=casVal('loc','line');
+  let taqu=casVal('loc','taqu');
+  if(taqu==='__all__'||taqu==='__newtaqu__') taqu='';
+  const desc=document.getElementById('loc_desc').value;
+  let url, body, isNew=false, no='';
+  if(s.newMode){
+    no=(document.getElementById('loc_newpole_no').value||'').trim();
+    if(!no){ toast('请填写新增电杆编号'); return; }
+    isNew=true; url='/api/poles/create-locate';
+    body={bureau:org.bureau, area:org.area, office:org.office,
+          sub:sub, line:line, taqu:taqu, pole_no:no, auto:s.newAuto?1:0,
+          digits:(document.getElementById('loc_kw').value||'').trim(),
+          lng:String(window._lng), lat:String(window._lat), desc:desc};
+  }else{
+    if(!s.rid){ toast('请先选择电杆；图纸没登记的杆请选列表顶部的「＋新增电杆」'); return; }
+    url='/api/poles/locate';
+    body={record_id:s.rid, lng:String(window._lng), lat:String(window._lat), desc:desc};
+  }
+  let d={};
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
+    d=await r.json();
+  }catch(e){ toast('保存失败：网络错误'); return; }
+  if(!d.ok){ toast('保存失败: '+(d.error||'')); return; }
+  if(isNew){
+    no=d.pole_no||no;
+    // 新杆并入本地列表，同一会话里再选它就有 ✓已定位 标记（后端也已就地入缓存）
+    s.poles.push({record_id:d.record_id, pole_no:no, desc:desc,
+                  lng:window._lng, lat:window._lat,
+                  source:'现场定位·新增电杆'});
+  }else{
+    const p=(s.poles||[]).find(x=>x.record_id===s.rid); no=p?p.pole_no:no;
+  }
+  window._npLast={rid:isNew?d.record_id:s.rid, no:no};
+  document.getElementById('np_done_info').innerHTML=
+    (isNew?'已新增电杆：<b>':'电杆：<b>')+esc(no)+'</b><br>'
+    +'坐标：'+Number(window._lat).toFixed(6)+', '+Number(window._lng).toFixed(6)+'<br>'
+    +'定位来源：'+(isNew?'现场定位·新增电杆':'现场定位');
+  hide('poleFormCard'); show('npDoneCard');
+  toast(isNew?'已新增电杆并保存定位 ✓':'定位已保存 ✓');
 }
 
 /* ===== 作业记录板块 ===== */
@@ -1219,26 +1585,8 @@ function drawTyphoon(d){
     }
   }
 }
-async function submitNewPole(){
-  const no=document.getElementById('np_no').value.trim();
-  if(!no){toast('电杆编号必填');return;}
-  if(window._lat==null||window._lng==null){toast('请先选择定位');return;}
-  const a1=document.getElementById('np_area1').value,a2=document.getElementById('np_area2').value,a3=document.getElementById('np_area3').value;
-  const area=[a1,a2,a3].filter(v=>v&&v!=="无").join(' / ');
-  const r=await fetch('/api/poles',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
-    body:JSON.stringify({pole_no:no,lng:String(window._lng),lat:String(window._lat),desc:document.getElementById('np_desc').value,area})});
-  const d=await r.json();
-  if(!d.record_id){toast('建杆失败: '+(d.error||''));return;}
-  window._npLast={rid:d.record_id,no:no};
-  document.getElementById('np_done_info').innerHTML=
-    '电杆编号：<b>'+esc(no)+'</b><br>'
-    +'所属供电所：'+esc(area||'(未填)')+'<br>'
-    +'坐标：'+Number(window._lat).toFixed(6)+', '+Number(window._lng).toFixed(6);
-  hide('poleFormCard'); show('npDoneCard');
-  toast('电杆已新建 ✓');
-}
 async function filesToB64(input){
-  return Promise.all(Array.from(input.files).map(f=>new Promise(res=>{
+  return Promise.all(Array.from(input.files||input).map(f=>new Promise(res=>{
     const r=new FileReader();
     r.onload=()=>{const p=String(r.result).split(',');res({name:f.name,data:p[1]||''});};
     r.onerror=()=>res(null);
@@ -1260,30 +1608,19 @@ async function submitJob(){
 }
 function resetAll(){
   hide('jobCard');show('searchCard');
-  document.getElementById('poleList').innerHTML='';document.getElementById('q').value='';renderRecent();
+  renderRecent();
+  casClearSel('job');
   document.getElementById('locline').textContent='未选择定位';
   ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   ['j_risk','j_sign'].forEach(id=>document.getElementById(id).selectedIndex=0);
   window._lat=null;window._lng=null;window._rid=null;_pick=null;
-  initArea();
 }
 
 /* ===== 勘察记录板块 ===== */
-async function searchSurveyPoles(){
-  const q=document.getElementById('sq').value.trim();
-  const box=document.getElementById('spoleList'); box.innerHTML='';
-  if(!q){ box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">请输入电杆编号再搜索</div>'; return; }
-  const r=await fetch('/api/poles?q='+encodeURIComponent(q), {credentials:'same-origin'});
-  const d=await r.json();
-  if(!d.items||!d.items.length){box.innerHTML='<div style="color:#8a8f99;font-size:13px;margin-top:8px">无匹配电杆</div>';return;}
-  const MAX=50;
-  d.items.slice(0,MAX).forEach(p=>{
-    const el=document.createElement('div'); el.className='pole';
-    el.innerHTML=`<div><div class="no">${esc(p.pole_no)}</div><div class="d">${esc(p.desc||'(无描述)')}</div></div><div class="d">选择 ›</div>`;
-    el.onclick=()=>selectSurveyPole(p.record_id,p.pole_no);
-    box.appendChild(el);
-  });
-  if(d.items.length>MAX) box.insertAdjacentHTML('beforeend','<div style="color:#8a8f99;font-size:12px;margin-top:8px">仅显示前 '+MAX+' 个，请输入更精确编号（如 #03 杆）</div>');
+function initSurveySearch(){
+  mountCascade('sv', {mountId:'sv_cas', allowAllTaqu:true, maxList:200,
+    kwPlaceholder:'知道杆号可在这里直搜（如 良登线#12）；也可输入关键字过滤下面的列表',
+    onPick:(rid,no)=>{ if(rid) selectSurveyPole(rid,no); }});
 }
 function selectSurveyPole(rid,no){
   window._srid=rid;
@@ -1291,6 +1628,21 @@ function selectSurveyPole(rid,no){
   hide('sSearchCard');show('surveyCard');
   if(!document.getElementById('s_date').value) document.getElementById('s_date').value=new Date().toISOString().slice(0,10);
 }
+let _sPhotoFiles=[];
+function sPhotoChanged(inp){
+  _sPhotoFiles=_sPhotoFiles.concat(Array.from(inp.files));
+  inp.value='';
+  renderSPhotos();
+}
+function renderSPhotos(){
+  const box=document.getElementById('s_photo_prev');if(!box)return;
+  box.querySelectorAll('img').forEach(im=>URL.revokeObjectURL(im.src));
+  box.innerHTML=_sPhotoFiles.map((f,i)=>
+    '<div class="pp"><img src="'+URL.createObjectURL(f)+'" alt=""><span class="x" title="移除" onclick="removeSPhoto('+i+')">✕</span></div>').join('');
+  document.getElementById('s_photo_count').textContent=_sPhotoFiles.length?('已选 '+_sPhotoFiles.length+' 张，可继续拍照/选照片追加，点缩略图右上角 ✕ 移除'):'';
+}
+function removeSPhoto(i){_sPhotoFiles.splice(i,1);renderSPhotos();}
+
 async function submitSurvey(){
   if(!window._srid){toast('请先选择或新建电杆');return;}
   if(!document.getElementById('s_date').value.trim()){toast('勘察时间必填');return;}
@@ -1301,7 +1653,7 @@ async function submitSurvey(){
     estimate: document.getElementById('s_estimate').value,
     method: document.getElementById('s_method').value,
     note: document.getElementById('s_note').value,
-    photos: await filesToB64(document.getElementById('s_photo'))
+    photos: await filesToB64(_sPhotoFiles)
   };
   const r=await fetch('/api/surveys',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
   const d=await r.json();
@@ -1310,8 +1662,9 @@ async function submitSurvey(){
 }
 function resetSurvey(){
   hide('surveyCard');show('sSearchCard');
-  document.getElementById('spoleList').innerHTML='';document.getElementById('sq').value='';
+  casClearSel('sv');
   ['s_env','s_note','s_date','s_photo'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  _sPhotoFiles=[];renderSPhotos();
   ['s_estimate','s_method'].forEach(id=>{const e=document.getElementById(id);if(e)e.selectedIndex=0;});
   window._srid=null;
 }
