@@ -244,11 +244,9 @@
         <div class="sb-body">
           <select id="selCity" class="sb-input" onchange="onCityChange()" title="市局（不筛选=全部）"></select>
           <select id="selBureau" class="sb-input" onchange="onBureauChange()" title="供电局（不筛选=全部）"></select>
-          <select id="selStation" class="sb-input" onchange="applySearch()" title="供电所（不筛选=全部）"></select>
-          <input id="selLine" class="sb-input" list="lineList" placeholder="线路名（模糊）" oninput="applySearch()">
-          <input id="selPole" class="sb-input" list="poleListDl" placeholder="电杆名称（模糊）" oninput="applySearch()">
-          <datalist id="lineList"></datalist>
-          <datalist id="poleListDl"></datalist>
+          <select id="selStation" class="sb-input" onchange="onStationChange()" title="供电所（不筛选=全部）"></select>
+          <select id="selSub" class="sb-input" onchange="applySearch()" title="变电站（不筛选=全部）"></select>
+          <select id="selLine" class="sb-input" onchange="applySearch()"><option value="">全部线路</option></select>
           <button class="sb-reset" onclick="resetSearch()">全部</button>
           <span class="cnt" id="mapCnt"></span>
         </div>
@@ -271,7 +269,7 @@
       <div class="wrap">
         <div class="card" id="searchCard">
           <div class="step">第 1 步 · 查找电杆</div>
-          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <!-- 六级级联（供电局→区局→供电所→变电站→线路→电杆）由组件注入 -->
           <div id="job_cas"></div>
           <div id="recentWrap" class="hidden">
             <div class="sub-t">最近选择（最多 4 个，点一下直接选）</div>
@@ -324,7 +322,7 @@
       <div class="wrap">
         <div class="card" id="sSearchCard">
           <div class="step">第 1 步 · 查找电杆</div>
-          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <!-- 六级级联（供电局→区局→供电所→变电站→线路→电杆）由组件注入 -->
           <div id="sv_cas"></div>
           <span class="link" onclick="showPage('newpole')">找不到？去「新增电杆定位」选杆 →</span>
         </div>
@@ -366,7 +364,7 @@
             <button class="btn-sm" style="width:auto" id="loc_sync_btn" onclick="syncPoles()">🔄 同步电杆主数据</button>
             <span style="font-size:12px;color:#8a8f99">在飞书里改过杆？点它刷新（约20秒）</span>
           </div>
-          <!-- 七级级联（供电局→区局→供电所→变电站→线路→台区→电杆）由组件注入 -->
+          <!-- 六级级联（供电局→区局→供电所→变电站→线路→电杆）由组件注入 -->
           <div id="loc_cas"></div>
           <label>⑧ 定位 *</label>
           <button class="btn-sm" style="width:auto" onclick="openMap()">选择定位（地图选点）</button>
@@ -575,10 +573,15 @@ function initAdminMap(){
   L.control.zoom({position:'bottomleft'}).addTo(_mapAdmin);
   L.tileLayer('https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'© 高德地图'}).addTo(_mapAdmin);
   _layer = L.layerGroup().addTo(_mapAdmin);
+  _mapAdmin.on('moveend', _renderInView);
   setTimeout(()=>_mapAdmin.invalidateSize(), 300);
 }
+let _mapDataLoaded=false;
 async function loadMapData(){
   if(!_mapAdmin) initAdminMap();
+  if(_mapDataLoaded && _allPoles && _allPoles.length){
+    buildSearchOptions(); applySearch(); return;   // 已加载过：不再请求全量，避免每次切页重拉+重绘几千个标记
+  }
   try{
     const r = await fetch('/api/poles/all', {credentials:'same-origin'});
     const d = await r.json();
@@ -586,21 +589,40 @@ async function loadMapData(){
     window._poleTotal = d.total || _allPoles.length;   // 主表全部杆数（含未定位）
     _poleById = {};
     _allPoles.forEach(p=>_poleById[p.record_id]=p);
+    _mapDataLoaded=true;
     buildSearchOptions();
     applySearch();
   }catch(e){ toast('加载电杆失败'); }
 }
+let _fullList=[];
+const _MARK_CAP=2500;
 function renderMapPoles(list){
-  _layer.clearLayers(); _markers={}; let shown=0;
-  (list||[]).forEach(p=>{
+  _fullList = list||[];
+  _renderInView();
+}
+function _renderInView(){
+  _layer.clearLayers(); _markers={};
+  const b=_mapAdmin.getBounds().pad(0.35);
+  let shown=0;
+  (_fullList||[]).forEach(p=>{
     if(p.lat==null || p.lng==null) return;
+    if(!b.contains([p.lat,p.lng])) return;            // 只画视野内，避免几千个 DOM 标记卡死浏览器
     const m = L.marker([p.lat, p.lng], {icon:_poleDefIcon}).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
     m.on('click', ()=>showDetail(p.record_id));
     _layer.addLayer(m);
     _markers[p.record_id]=m;
     shown++;
+    if(shown>=_MARK_CAP) return;
   });
-  document.getElementById('mapCnt').textContent = '已定位 ' + shown + ' / 共 ' + (window._poleTotal||_allPoles.length) + ' 杆';
+  document.getElementById('mapCnt').textContent = shown + ' / ' + _allPoles.length + ' 杆（视野内）';
+}
+function _ensureMarker(p){
+  if(!p || p.lat==null || p.lng==null) return;
+  if(_markers[p.record_id]) return;
+  const m = L.marker([p.lat, p.lng], {icon:_poleDefIcon}).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
+  m.on('click', ()=>showDetail(p.record_id));
+  _layer.addLayer(m);
+  _markers[p.record_id]=m;
 }
 function fitToPoles(list){
   const pts = (list||[]).filter(p=>p.lat!=null&&p.lng!=null).map(p=>[p.lat,p.lng]);
@@ -609,33 +631,38 @@ function fitToPoles(list){
   else _mapAdmin.fitBounds(pts, {padding:[60,60], maxZoom:15});
 }
 
-/* ===== 地图分类搜索：供电所 / 供电局 / 线路名 / 电杆名称 ===== */
-let _allCities=[], _allBureaus=[], _allStations=[], _cityToBureaus={}, _bureauToStations={}, _filteredPoles=null;
+/* ===== 地图分类搜索：市局 / 供电局 / 供电所 / 变电站 / 线路名 ===== */
+let _allCities=[], _allBureaus=[], _allStations=[], _cityToBureaus={}, _bureauToStations={}, _allSubs=[], _bureauToSubs={}, _stationToSubs={}, _filteredPoles=null;
 function splitArea(a){ return (a||'').split(' / ').map(s=>s.trim()).filter(Boolean); }
 function cityOf(p){ const s=splitArea(p.area); return s.length?s[0]:''; }
 function bureauOf(p){ const s=splitArea(p.area); return s.length>=2?s[1]:''; }
 function stationOf(p){ const s=splitArea(p.area); return s.length?s[s.length-1]:(p.area||'').trim(); }
 function buildSearchOptions(){
-  const cities=new Set(), cityB={}, burSt={}, stations=new Set();
+  const cities=new Set(), cityB={}, burSt={}, stations=new Set(), burSub={}, subs=new Set(), stSub={};
   (_allPoles||[]).forEach(p=>{
     const s=splitArea(p.area);
-    if(s.length>=3){ cities.add(s[0]); (cityB[s[0]]=cityB[s[0]]||new Set()).add(s[1]); (burSt[s[1]]=burSt[s[1]]||new Set()).add(s[2]); stations.add(s[2]); }
-    else if(s.length===2){ cities.add(s[0]); (cityB[s[0]]=cityB[s[0]]||new Set()).add(s[1]); stations.add(s[1]); }
-    else if(p.area){ stations.add(p.area.trim()); }
+    if(s.length>=2){ cities.add(s[0]); (cityB[s[0]]=cityB[s[0]]||new Set()).add(s[1]); }
+    const st=stationOf(p);
+    if(st){ stations.add(st); (burSt[bureauOf(p)]=burSt[bureauOf(p)]||new Set()).add(st); }
+    if(p.sub){ subs.add(p.sub); (burSub[bureauOf(p)]=burSub[bureauOf(p)]||new Set()).add(p.sub); if(st) (stSub[st]=stSub[st]||new Set()).add(p.sub); }
   });
   Object.keys(AREA_TREE).forEach(c=>{ cities.add(c); Object.keys(AREA_TREE[c]||{}).forEach(d=>{ (cityB[c]=cityB[c]||new Set()).add(d); (AREA_TREE[c][d]||[]).forEach(st=>{ (burSt[d]=burSt[d]||new Set()).add(st); stations.add(st); }); }); });
   _allCities=[...cities].sort();
   const _bSet=new Set();
   Object.values(cityB).forEach(set=>set.forEach(x=>_bSet.add(x)));
   _allBureaus=[..._bSet].sort();
-  _cityToBureaus=cityB; _bureauToStations=burSt; _allStations=[...stations].sort();
+  _cityToBureaus=cityB; _bureauToStations=burSt; _allStations=[...stations].sort(); _bureauToSubs=burSub; _stationToSubs=stSub; _allSubs=[...subs].sort();
   const selC=document.getElementById('selCity');
   selC.innerHTML='<option value="">全部市局</option>'+_allCities.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
   fillBureauOptions('');
-  const lines=new Set(), polesn=new Set();
-  (_allPoles||[]).forEach(p=>{ const ln=parsePoleLine(p.pole_no).line; if(ln&&ln!=='未命名') lines.add(ln); if(p.pole_no) polesn.add(p.pole_no); });
-  document.getElementById('lineList').innerHTML=[...lines].sort().map(l=>'<option value="'+esc(l)+'">').join('');
-  document.getElementById('poleListDl').innerHTML=[...polesn].sort().map(n=>'<option value="'+esc(n)+'">').join('');
+  const selStation=document.getElementById('selStation');
+  if(selStation) selStation.innerHTML='<option value="">全部供电所</option>'+_allStations.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+  const lines=new Set();
+  (_allPoles||[]).forEach(p=>{ const ln=poleLine(p); if(ln&&ln!=='未命名') lines.add(ln); });
+  const selLine=document.getElementById('selLine');
+  if(selLine) selLine.innerHTML='<option value="">全部线路</option>'+[...lines].sort().map(l=>'<option value="'+esc(l)+'">'+esc(l)+'</option>').join('');
+  const selSub=document.getElementById('selSub');
+  if(selSub) selSub.innerHTML='<option value="">全部变电站</option>'+_allSubs.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
 }
 function fillBureauOptions(city){
   const selB=document.getElementById('selBureau');
@@ -650,12 +677,21 @@ function fillStationOptions(city, bureau){
   else if(city){ const set=new Set(); (_cityToBureaus[city]||[]).forEach(b=>{ (_bureauToStations[b]||new Set()).forEach(st=>set.add(st)); }); opts=[...set].sort(); }
   selS.innerHTML='<option value="">全部供电所</option>'+opts.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
 }
+function fillSubOptions(city, bureau, station){
+  const selS=document.getElementById('selSub');
+  let opts=_allSubs;
+  if(station){ const set=_stationToSubs[station]; opts= set? [...set].sort() : []; }
+  else if(bureau){ const set=_bureauToSubs[bureau]; opts= set? [...set].sort() : []; }
+  selS.innerHTML='<option value="">全部变电站</option>'+opts.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+}
 function onCityChange(){
   const c=document.getElementById('selCity').value;
   fillBureauOptions(c);
   document.getElementById('selBureau').value='';
   fillStationOptions(c,'');
   document.getElementById('selStation').value='';
+  fillSubOptions(c,'','');
+  document.getElementById('selSub').value='';
   applySearch();
 }
 function onBureauChange(){
@@ -663,6 +699,16 @@ function onBureauChange(){
   const b=document.getElementById('selBureau').value;
   fillStationOptions(c,b);
   document.getElementById('selStation').value='';
+  fillSubOptions(c,b,'');
+  document.getElementById('selSub').value='';
+  applySearch();
+}
+function onStationChange(){
+  const c=document.getElementById('selCity').value;
+  const b=document.getElementById('selBureau').value;
+  const st=document.getElementById('selStation').value;
+  fillSubOptions(c,b,st);
+  document.getElementById('selSub').value='';
   applySearch();
 }
 function applySearch(){
@@ -670,14 +716,14 @@ function applySearch(){
   const c=document.getElementById('selCity').value;
   const b=document.getElementById('selBureau').value;
   const s=document.getElementById('selStation').value;
+  const sub=document.getElementById('selSub').value;
   const ln=document.getElementById('selLine').value.trim().toLowerCase();
-  const pn=document.getElementById('selPole').value.trim().toLowerCase();
   let list=_allPoles;
   if(c) list=list.filter(p=>cityOf(p)===c);
   if(b) list=list.filter(p=>bureauOf(p)===b);
-  if(s) list=list.filter(p=>stationOf(p)===s);
-  if(ln) list=list.filter(p=>parsePoleLine(p.pole_no).line.toLowerCase().includes(ln)); // 线路名模糊
-  if(pn) list=list.filter(p=>(p.pole_no||'').toLowerCase().includes(pn));    // 电杆名称模糊
+  if(s) list=list.filter(p=>stationOf(p)===s);            // 供电所精确筛选
+  if(sub) list=list.filter(p=>(p.sub||'')===sub);            // 变电站精确筛选
+  if(ln) list=list.filter(p=>poleLine(p).toLowerCase()===ln); // 线路名精确筛选
   _filteredPoles=list;
   renderMapPoles(list);
   fitToPoles(list);
@@ -689,8 +735,9 @@ function resetSearch(){
   document.getElementById('selBureau').value='';
   fillStationOptions('','');
   document.getElementById('selStation').value='';
+  fillSubOptions('','','');
+  document.getElementById('selSub').value='';
   document.getElementById('selLine').value='';
-  document.getElementById('selPole').value='';
   _filteredPoles=_allPoles;
   renderMapPoles(_allPoles);
   refreshLineIfOn();
@@ -706,6 +753,7 @@ async function showDetail(rid){
   const p = _poleById[rid];
   if(!p) return;
   if(p.lat!=null) _mapAdmin.setView([p.lat, p.lng], 17);
+  _ensureMarker(p);
   if(_markers[rid]) _markers[rid].openPopup();
   let jobs=[], surveys=[];
   _galleries=[];
@@ -823,7 +871,7 @@ function gcj2bd(lng,lat){let x=lng,y=lat,z=Math.sqrt(x*x+y*y)+0.00002*Math.sin(y
 function show(id){document.getElementById(id).classList.remove('hidden');}
 function hide(id){document.getElementById(id).classList.add('hidden');}
 /* 注：原先的 initArea/fillArea2/fillArea3（旧「新增电杆」的市局/区局/供电所下拉）
-   已被通用七级级联组件取代，相关 DOM 与函数均已移除。 */
+   已被通用级联选杆组件取代，相关 DOM 与函数均已移除。 */
 
 /* ===== 验收导出板块 ===== */
 let _acTimer=null;
@@ -968,19 +1016,18 @@ function renderRecent(){
   });
 }
 function initJobSearch(){
-  mountCascade('job', {mountId:'job_cas', allowAllTaqu:true, maxList:200,
+  mountCascade('job', {mountId:'job_cas', maxList:200,
     kwPlaceholder:'知道杆号可在这里直搜（如 良登线#12）；也可输入关键字过滤下面的列表',
     onPick:(rid,no)=>{ if(rid) selectPole(rid,no); }});
 }
-/* ============ 通用七级级联选杆组件（新增定位 / 作业记录 / 勘察记录 三处复用） ============
-   供电局 → 区局 → 供电所 → 变电站 → 线路 → 台区 → 电杆
-   前三级用本地 AREA_TREE（零请求，秒出）；后四级走后端 /api/poles/pick（已带缓存，毫秒级）。
-   用法：mountCascade('loc', {mountId:'loc_cas', allowNewPole:true, allowNewTaqu:true,
-                             allowAllTaqu:true, onPick:(rid,no)=>{...}})
+/* ============ 通用六级级联选杆组件（新增定位 / 作业记录 / 勘察记录 三处复用） ============
+   供电局 → 区局 → 供电所 → 变电站 → 线路 → 电杆
+   前三级用本地 AREA_TREE（零请求，秒出）；后三级走后端 /api/poles/pick（已带缓存，毫秒级）。
+   用法：mountCascade('loc', {mountId:'loc_cas', allowNewPole:true, onPick:(rid,no)=>{...}})
    ============ */
-const CASC_KEYS = ['bureau','area','office','sub','line','taqu'];
-const CASC_LABELS = ['① 供电局','② 区局','③ 供电所','④ 变电站','⑤ 线路','⑥ 台区'];
-const CASC_PH = ['供电局','区局','供电所','变电站','线路','台区'];
+const CASC_KEYS = ['bureau','area','office','sub','line'];
+const CASC_LABELS = ['① 供电局','② 区局','③ 供电所','④ 变电站','⑤ 线路'];
+const CASC_PH = ['供电局','区局','供电所','变电站','线路'];
 const CASC_LSKEY = 'ct_casc_last';       // 记住上次选的供电所，下次直接跳到变电站
 // 默认组织三级（没选择过时的兜底）：佛山供电局 / 南海供电局 / 丹灶供电所
 const CASC_DEFAULT_ORG = {bureau:'佛山供电局', area:'南海供电局', office:'丹灶供电所'};
@@ -998,26 +1045,18 @@ function casVal(p,k){ const e=document.getElementById(p+'_'+k); return e? e.valu
 function casSetVal(p,k,v){ const e=document.getElementById(p+'_'+k); if(e) e.value=v; }
 function casOrgQ(p){ return {bureau:casVal(p,'bureau'), area:casVal(p,'area'), office:casVal(p,'office')}; }
 function casOptLabel(pk,v){
-  if(v==='__all__') return '（全部台区）';
-  if(v==='__newtaqu__') return '＋ 新增台区…';
   return esc(v);
 }
 
 function casHTML(p,o){
   o=o||{};
   let h='';
-  for(let i=0;i<6;i++){
+  for(let i=0;i<5;i++){
     const k=CASC_KEYS[i];
     h+='<label>'+CASC_LABELS[i]+'</label>'
       +'<select id="'+p+'_'+k+'" onchange="casChange(\''+p+'\','+i+')"><option value="">请选择'+CASC_PH[i]+'</option></select>';
-    if(k==='taqu' && o.allowNewTaqu){
-      h+='<div id="'+p+'_newtaqu_wrap" style="display:none;margin-top:8px">'
-        +'<input id="'+p+'_newtaqu" placeholder="新台区名，如：新村（≤14字，不含 #/台变）">'
-        +'<button class="btn-sm" style="width:auto;margin-top:6px" onclick="casApplyNewTaqu(\''+p+'\')">确定新增台区</button>'
-        +'</div>';
-    }
   }
-  h+='<label>⑦ 电杆 *</label>'
+  h+='<label>⑥ 电杆 *</label>'
     +'<input id="'+p+'_kw" placeholder="'+(o.kwPlaceholder||'可输入杆号过滤，如 12')+'" oninput="casKw(\''+p+'\')">'
     +'<select id="'+p+'_pole" size="6" style="height:158px" onchange="casPicked(\''+p+'\')"></select>';
   if(o.allowNewPole){
@@ -1067,12 +1106,11 @@ async function casLoad(p, i){
   casClearSel(p);
   _hx(p+'_newpole_wrap', false);
   const a=document.getElementById(p+'_newpole_no'); if(a) a.value='';
-  if(i>=6){ await casLoadPoles(p); return; }
-  for(let j=i;j<6;j++){
+  if(i>=5){ await casLoadPoles(p); return; }
+  for(let j=i;j<5;j++){
     const e=document.getElementById(p+'_'+CASC_KEYS[j]);
     if(e){ e.innerHTML='<option value="">请选择'+CASC_PH[j]+'</option>'; e.disabled=(j>i); }
   }
-  if(i>2) _hx(p+'_newtaqu_wrap', false);
   if(i<3){ casFillOrg(p,i); return; }
   const pk=CASC_KEYS[i];
   const el=document.getElementById(p+'_'+pk);
@@ -1080,19 +1118,14 @@ async function casLoad(p, i){
   el.innerHTML='<option value="">加载中…</option>'; el.disabled=true;
   const q=casOrgQ(p);
   if(i>=4) q.sub=casVal(p,'sub');
-  if(i>=5) q.line=casVal(p,'line');
   let d;
   try{ d=await casFetch(q); }
   catch(e){ el.innerHTML='<option value="">加载失败，请重试</option>'; return; }
   let items=(d.items||[]).slice();
-  if(pk==='taqu'){
-    if(s.opts.allowAllTaqu) items=['__all__'].concat(items);
-    if(s.opts.allowNewTaqu) items=items.concat(['__newtaqu__']);
-  }
   el.innerHTML='<option value="">请选择'+CASC_PH[i]+'</option>'
     +items.map(v=>'<option value="'+esc(v)+'">'+casOptLabel(pk,v)+'</option>').join('');
   el.disabled=false;
-  if(pk==='taqu' && s.opts.allowAllTaqu){ el.value='__all__'; await casLoad(p,6); }
+
 }
 
 function casChange(p, i){
@@ -1103,15 +1136,6 @@ function casChange(p, i){
     o.bureau=casVal(p,'bureau'); o.area=casVal(p,'area'); o.office=casVal(p,'office');
     try{ localStorage.setItem(CASC_LSKEY, JSON.stringify(o)); }catch(e){}
   }
-  if(k==='taqu'){
-    const t=casVal(p,'taqu');
-    if(t==='__newtaqu__'){
-      _hx(p+'_newtaqu_wrap', true);
-      casPoles(p, []); casClearSel(p);
-      return;
-    }
-    _hx(p+'_newtaqu_wrap', false);
-  }
   casLoad(p, i+1);
 }
 
@@ -1121,8 +1145,7 @@ async function casLoadPoles(p){
   if(!casVal(p,'line')){ casPoles(p, []); return; }
   el.innerHTML='<option value="">加载中…</option>';
   const q=casOrgQ(p); q.sub=casVal(p,'sub'); q.line=casVal(p,'line');
-  const t=casVal(p,'taqu');
-  if(t && t!=='__all__' && t!=='__newtaqu__') q.taqu=t; else q.list='1';
+  q.list='1';
   try{ const d=await casFetch(q); casPoles(p, d.items||[]); }
   catch(e){ el.innerHTML='<option value="">加载失败</option>'; }
 }
@@ -1259,8 +1282,6 @@ async function casPreviewNo(p){
   const inp=document.getElementById(p+'_newpole_no'), hint=document.getElementById(p+'_newpole_hint');
   if(!inp||!hint) return;
   if(!s.newAuto && (inp.value||'').trim()) return;   // 用户手改过就不覆盖
-  let taqu=casVal(p,'taqu');
-  if(taqu==='__all__'||taqu==='__newtaqu__') taqu='';
   const bsel=document.getElementById(p+'_npbranch');
   const bnew=document.getElementById(p+'_npbranch_new');
   const branch=(bnew&&bnew.value.trim()) ? bnew.value.trim() : (bsel?bsel.value:'');
@@ -1269,7 +1290,6 @@ async function casPreviewNo(p){
   try{
     const r=await fetch('/api/poles/preview-no?sub='+encodeURIComponent(casVal(p,'sub'))
       +'&line='+encodeURIComponent(casVal(p,'line'))
-      +'&taqu='+encodeURIComponent(taqu)
       +'&branch='+encodeURIComponent(branch)
       +'&digits='+encodeURIComponent(digits),{credentials:'same-origin'});
     const d=await r.json();
@@ -1283,27 +1303,10 @@ async function casPreviewNo(p){
 function casNewPoleEdit(p){ const s=_cas[p]; if(s) s.newAuto=false; }
 async function casResetNo(p){ const s=_cas[p]; if(!s) return; s.newAuto=true; await casPreviewNo(p); }
 
-/* 台区顺手新建：新台区名只写在新杆上，杆一建好它就自动出现在台区下拉里（下拉是从杆表汇总的） */
-function casApplyNewTaqu(p){
-  const v=(document.getElementById(p+'_newtaqu').value||'').trim();
-  if(!v){ toast('请输入台区名'); return; }
-  if(v.length>14 || /[#＃]|公用|台变|配变|电站|箱变|开关站/.test(v)){ toast('台区名不合规：≤14字，且不含 #/台变/公用 等'); return; }
-  const ts=document.getElementById(p+'_taqu');
-  [...ts.options].forEach(o=>{ if(o.value===v) o.remove(); });
-  const op=document.createElement('option'); op.value=v; op.textContent=v+'（新）';
-  const lastOpt=ts.options[ts.options.length-1];
-  ts.insertBefore(op, (lastOpt && lastOpt.value==='__newtaqu__')? lastOpt : null);
-  ts.value=v;
-  _hx(p+'_newtaqu_wrap', false);
-  document.getElementById(p+'_newtaqu').value='';
-  toast('已新增台区「'+v+'」，接着填它的电杆杆号');
-  casLoad(p, 6);
-}
-
 /* ===== 新增电杆定位板块（从主表选杆 + 补录定位） ===== */
 function _hx(id,show){const e=document.getElementById(id);if(e)e.style.display=show?'block':'none';}
 function initNewPole(){
-  mountCascade('loc', {mountId:'loc_cas', allowNewPole:true, allowNewTaqu:true, allowAllTaqu:true,
+  mountCascade('loc', {mountId:'loc_cas', allowNewPole:true,
     kwPlaceholder:'可输入杆号过滤，如 12；列表里找不到就直接新增',
     onPick:(rid,no)=>{ window._locRid=rid; }});
 }
@@ -1316,6 +1319,7 @@ async function syncPoles(){
     const d=await r.json();
     if(d.ok){
       toast('已同步 '+d.total+' 条电杆主数据 ✓');
+      _mapDataLoaded=false;
       if(casVal('loc','line')) casLoad('loc',6);
       else if(casVal('loc','office')) casLoad('loc',3);
     }else{ toast('同步失败: '+(d.error||'')); }
@@ -1338,8 +1342,6 @@ async function submitLocate(){
   const s=_cas['loc']; if(!s){ toast('页面未初始化，请刷新'); return; }
   const org=casOrgQ('loc');
   const sub=casVal('loc','sub'), line=casVal('loc','line');
-  let taqu=casVal('loc','taqu');
-  if(taqu==='__all__'||taqu==='__newtaqu__') taqu='';
   const desc=document.getElementById('loc_desc').value;
   let url, body, isNew=false, no='';
   if(s.newMode){
@@ -1347,7 +1349,7 @@ async function submitLocate(){
     if(!no){ toast('请填写新增电杆编号'); return; }
     isNew=true; url='/api/poles/create-locate';
     body={bureau:org.bureau, area:org.area, office:org.office,
-          sub:sub, line:line, taqu:taqu, pole_no:no, auto:s.newAuto?1:0,
+          sub:sub, line:line, pole_no:no, auto:s.newAuto?1:0,
           digits:(document.getElementById('loc_kw').value||'').trim(),
           lng:String(window._lng), lat:String(window._lat), desc:desc};
   }else{
@@ -1376,6 +1378,7 @@ async function submitLocate(){
     +'坐标：'+Number(window._lat).toFixed(6)+', '+Number(window._lng).toFixed(6)+'<br>'
     +'定位来源：'+(isNew?'现场定位·新增电杆':'现场定位');
   hide('poleFormCard'); show('npDoneCard');
+  _mapDataLoaded=false;   // 新增/更新了定位，下次进地图页重新拉一次
   toast(isNew?'已新增电杆并保存定位 ✓':'定位已保存 ✓');
 }
 
@@ -1509,12 +1512,21 @@ function parsePoleLine(no){
   const seq=m?parseInt(m[0],10):0;
   return {line, seq};
 }
+function poleLine(p){
+  // 优先用飞书主表「线路」字段（与「线路连线」口径一致），缺失时退回从杆号解析
+  const f = (p && p.line && p.line!=='未命名') ? p.line : '';
+  if(f) return f;
+  return parsePoleLine(p && p.pole_no || '').line;
+}
+
 function buildLineLayer(poles){
   poles=poles||_allPoles;
   const groups={};
   (poles||[]).forEach(p=>{
     if(p.lat==null||p.lng==null) return;
-    const {line,seq}=parsePoleLine(p.pole_no);
+    const line=poleLine(p);
+    if(!line||line==='未命名') return;
+    const {seq}=parsePoleLine(p.pole_no);
     (groups[line]=groups[line]||[]).push({p,seq});
   });
   const layer=L.layerGroup();
@@ -1618,7 +1630,7 @@ function resetAll(){
 
 /* ===== 勘察记录板块 ===== */
 function initSurveySearch(){
-  mountCascade('sv', {mountId:'sv_cas', allowAllTaqu:true, maxList:200,
+  mountCascade('sv', {mountId:'sv_cas', maxList:200,
     kwPlaceholder:'知道杆号可在这里直搜（如 良登线#12）；也可输入关键字过滤下面的列表',
     onPick:(rid,no)=>{ if(rid) selectSurveyPole(rid,no); }});
 }

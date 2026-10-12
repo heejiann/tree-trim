@@ -1108,11 +1108,11 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/poles/pick":
             qs = urllib.parse.parse_qs(u.query)
             g = lambda k: qs.get(k, [""])[0].strip()
-            # 七级级联：供电局 → 区局 → 供电所 → 变电站 → 线路 → 台区 → 电杆
+            # 六级级联：供电局 → 区局 → 供电所 → 变电站 → 线路 → 电杆
             # org=0 可跳过组织三级（等价于旧的四级行为，供旧调用方兜底）
             use_org = g("org") != "0"
             bureau, area, office = g("bureau"), g("area"), g("office")
-            sub, line, taqu, kw = g("sub"), g("line"), g("taqu"), g("q")
+            sub, line, kw = g("sub"), g("line"), g("q")
             id2name = {v: k for k, v in fmap(MASTER).items()}
             rows = []
             for r in list_all(MASTER):
@@ -1131,8 +1131,6 @@ class H(BaseHTTPRequestHandler):
                 rows = [x for x in rows if x[1].get("变电站", "") == sub]
             if line:
                 rows = [x for x in rows if x[1].get("线路", "") == line]
-            if taqu:
-                rows = [x for x in rows if x[1].get("台区", "") == taqu]
             # 逐级返回：没选到哪一级，就返回下一级的候选
             # 例外：前端要「不限台区、直接看该线全部杆」时带 list=1
             want_poles = (g("list") == "1")
@@ -1150,9 +1148,6 @@ class H(BaseHTTPRequestHandler):
                 return
             if not line:
                 self._send(200, {"level": "line", "items": sorted({x[1].get("线路", "") for x in rows if x[1].get("线路")})})
-                return
-            if not taqu and not want_poles:
-                self._send(200, {"level": "taqu", "items": sorted({x[1].get("台区", "") for x in rows if x[1].get("台区")})})
                 return
             if kw:
                 kl = kw.lower()
