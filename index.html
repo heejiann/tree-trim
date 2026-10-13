@@ -297,18 +297,26 @@
           </select>
           <label>剪下树枝量</label>
           <input id="j_branch" placeholder="如 3 车 / 200kg">
-          <label>修剪前情况（拍照 / 选照片）</label>
-          <input id="j_before" type="file" accept="image/*" multiple>
-          <label>修剪后情况（拍照 / 选照片）</label>
-          <input id="j_after" type="file" accept="image/*" multiple>
-          <label>站班会情况（拍照 / 选照片）</label>
-          <input id="j_station" type="file" accept="image/*" multiple>
+          <label>修剪前情况（可一次多选，也可分次追加）</label>
+          <input id="j_before" type="file" accept="image/*" multiple onchange="jPhotoChanged(this,'before')">
+          <div id="j_prev_before" class="photo-prev"></div>
+          <div class="photo-hint" id="j_count_before"></div>
+          <label>修剪后情况（可一次多选，也可分次追加）</label>
+          <input id="j_after" type="file" accept="image/*" multiple onchange="jPhotoChanged(this,'after')">
+          <div id="j_prev_after" class="photo-prev"></div>
+          <div class="photo-hint" id="j_count_after"></div>
+          <label>站班会情况（可一次多选，也可分次追加）</label>
+          <input id="j_station" type="file" accept="image/*" multiple onchange="jPhotoChanged(this,'station')">
+          <div id="j_prev_station" class="photo-prev"></div>
+          <div class="photo-hint" id="j_count_station"></div>
           <label>标示牌等线路装置状态</label>
           <select id="j_sign">
             <option>完好</option><option>缺失</option><option>需更换</option>
           </select>
-          <label>附件（拍照 / 选照片，记录有缺陷的标示牌等线路装置状态）</label>
-          <input id="j_attach" type="file" accept="image/*" multiple>
+          <label>附件（可一次多选，也可分次追加；记录有缺陷的标示牌等线路装置状态）</label>
+          <input id="j_attach" type="file" accept="image/*" multiple onchange="jPhotoChanged(this,'attach')">
+          <div id="j_prev_attach" class="photo-prev"></div>
+          <div class="photo-hint" id="j_count_attach"></div>
           <label>备注</label>
           <textarea id="j_note" placeholder="其他情况"></textarea>
           <button class="btn-primary" style="margin-top:14px" onclick="submitJob()">提交作业</button>
@@ -1605,11 +1613,29 @@ async function filesToB64(input){
     r.readAsDataURL(f);
   }))).then(x=>x.filter(Boolean));
 }
+/* ===== 作业记录照片：追加选图 + 预览 + 单张移除（手机端 multiple 常失效，分次追加保底） ===== */
+let _jPhotos={before:[],after:[],station:[],attach:[]};
+function jPhotoChanged(inp,key){
+  _jPhotos[key]=_jPhotos[key].concat(Array.from(inp.files||[]));
+  inp.value='';              // 清空，保证同一文件可再次选中触发 change
+  renderJPhotos(key);
+}
+function renderJPhotos(key){
+  const box=document.getElementById('j_prev_'+key);if(!box)return;
+  box.querySelectorAll('img').forEach(im=>URL.revokeObjectURL(im.src));
+  box.innerHTML=_jPhotos[key].map((f,i)=>
+    '<div class="pp"><img src="'+URL.createObjectURL(f)+'" alt=""><span class="x" title="移除" onclick="removeJPhoto(\''+key+'\','+i+')">✕</span></div>').join('');
+  const cnt=document.getElementById('j_count_'+key);
+  if(cnt) cnt.textContent=_jPhotos[key].length?('已选 '+_jPhotos[key].length+' 张，可继续拍照/选照片追加，点缩略图右上角 ✕ 移除'):'';
+}
+function removeJPhoto(key,i){_jPhotos[key].splice(i,1);renderJPhotos(key);}
+function resetJPhotos(){['before','after','station','attach'].forEach(k=>{_jPhotos[k]=[];renderJPhotos(k);});}
+
 async function submitJob(){
   if(!window._rid){toast('请先选择或新建电杆');return;}
   if(!document.getElementById('j_ticket').value.trim()){toast('工作票编号必填');return;}
-  const photos={before:await filesToB64(document.getElementById('j_before')),after:await filesToB64(document.getElementById('j_after')),
-    station:await filesToB64(document.getElementById('j_station')),attach:await filesToB64(document.getElementById('j_attach'))};
+  const photos={before:await filesToB64(_jPhotos.before),after:await filesToB64(_jPhotos.after),
+    station:await filesToB64(_jPhotos.station),attach:await filesToB64(_jPhotos.attach)};
   const body={pole_record_id:window._rid,ticket:document.getElementById('j_ticket').value.trim(),job_date:document.getElementById('j_date').value,
     worker:document.getElementById('j_worker').value,tree:document.getElementById('j_tree').value,risk:document.getElementById('j_risk').value,
     branch:document.getElementById('j_branch').value,sign:document.getElementById('j_sign').value,note:document.getElementById('j_note').value,photos};
@@ -1624,6 +1650,7 @@ function resetAll(){
   casClearSel('job');
   document.getElementById('locline').textContent='未选择定位';
   ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  resetJPhotos();
   ['j_risk','j_sign'].forEach(id=>document.getElementById(id).selectedIndex=0);
   window._lat=null;window._lng=null;window._rid=null;_pick=null;
 }
