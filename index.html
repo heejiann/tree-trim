@@ -575,7 +575,7 @@ function showPage(page, silent){
 }
 
 /* ===== 地图管理 ===== */
-let _mapAdmin=null, _layer=null, _allPoles=[], _poleById={}, _markers={}, _lineLayer=null, _lineOn=false;
+let _mapAdmin=null, _layer=null, _allPoles=[], _poleById={}, _markers={}, _lineLayer=null, _lineOn=false, _curPopupRid=null;
 function initAdminMap(){
   _mapAdmin = L.map('mapAdmin', {zoomControl:false}).setView([23.13,113.26], 11);
   L.control.zoom({position:'bottomleft'}).addTo(_mapAdmin);
@@ -609,20 +609,34 @@ function renderMapPoles(list){
   _renderInView();
 }
 function _renderInView(){
-  _layer.clearLayers(); _markers={};
   const b=_mapAdmin.getBounds().pad(0.35);
-  let shown=0;
-  (_fullList||[]).forEach(p=>{
-    if(p.lat==null || p.lng==null) return;
-    if(!b.contains([p.lat,p.lng])) return;            // 只画视野内，避免几千个 DOM 标记卡死浏览器
+  // 先算本次应在视野内的杆（超上限即截断）
+  const inView=[];
+  for(const p of (_fullList||[])){
+    if(p.lat==null || p.lng==null) continue;
+    if(!b.contains([p.lat,p.lng])) continue;          // 只画视野内，避免几千个 DOM 标记卡死浏览器
+    inView.push(p);
+    if(inView.length>=_MARK_CAP) break;
+  }
+  const want={};
+  for(const p of inView) want[p.record_id]=p;
+  // 增量更新：移除划出视野的、保留仍在视野的、只新建新进视野的（不再全清重建）
+  for(const rid of Object.keys(_markers)){
+    if(!want[rid]){ _layer.removeLayer(_markers[rid]); delete _markers[rid]; }
+  }
+  for(const p of inView){
+    if(_markers[p.record_id]) continue;
     const m = L.marker([p.lat, p.lng], {icon:_poleDefIcon}).bindPopup('<b>'+(p.pole_no||'')+'</b><br>'+(p.area||''));
     m.on('click', ()=>showDetail(p.record_id));
     _layer.addLayer(m);
     _markers[p.record_id]=m;
-    shown++;
-    if(shown>=_MARK_CAP) return;
-  });
-  document.getElementById('mapCnt').textContent = shown + ' / ' + _allPoles.length + ' 杆（视野内）';
+  }
+  // 增量渲染后 marker 对象不销毁，popup 通常仍开着；兜底重开一次
+  if(_curPopupRid && _markers[_curPopupRid]){
+    const pm=_markers[_curPopupRid];
+    if(!pm.isPopupOpen || !pm.isPopupOpen()) pm.openPopup();
+  }
+  document.getElementById('mapCnt').textContent = inView.length + ' / ' + _allPoles.length + ' 杆（视野内）';
 }
 function _ensureMarker(p){
   if(!p || p.lat==null || p.lng==null) return;
@@ -757,24 +771,31 @@ function refreshLineIfOn(){
     if(res.drawn>0){ res.layer.addTo(_mapAdmin); _lineLayer=res.layer; }
   }
 }
+let _detailSeq=0;
 async function showDetail(rid){
   const p = _poleById[rid];
   if(!p) return;
-  if(p.lat!=null) _mapAdmin.setView([p.lat, p.lng], 17);
+  // 杆已在视野内就不移动地图：无脑 setView 会触发 moveend → 标记全清重建（点击卡顿源之一）
+  if(p.lat!=null && !_mapAdmin.getBounds().pad(0.15).contains([p.lat,p.lng])) _mapAdmin.setView([p.lat, p.lng], 17);
   _ensureMarker(p);
   if(_markers[rid]) _markers[rid].openPopup();
+  _curPopupRid = rid;                    // 供 _renderInView 增量渲染后恢复 popup
   let jobs=[], surveys=[];
   _galleries=[];
+  const seq = ++_detailSeq;              // 连续快点击多根杆时，只渲染最后一次请求的结果
   try{
     const r = await fetch('/api/poles/'+rid+'/jobs', {credentials:'same-origin'});
     const d = await r.json();
+    if(seq!==_detailSeq) return;
     jobs = d.items || [];
   }catch(e){}
   try{
     const r2 = await fetch('/api/poles/'+rid+'/surveys', {credentials:'same-origin'});
     const d2 = await r2.json();
+    if(seq!==_detailSeq) return;
     surveys = d2.items || [];
   }catch(e){}
+  if(seq!==_detailSeq) return;
   // 导航链接（WGS84 -> GCJ02 -> BD09）
   const [glng,glat] = (p.lng!=null)?wgs2gcj(p.lng,p.lat):[p.lng,p.lat];
   const [blng,blat] = (glng!=null)?gcj2bd(glng,glat):[p.lng,p.lat];
@@ -820,7 +841,7 @@ async function showDetail(rid){
   document.getElementById('pd_body').innerHTML = html;
   document.getElementById('poleDetail').classList.add('show');
 }
-function hideDetail(){ document.getElementById('poleDetail').classList.remove('show'); }
+function hideDetail(){ document.getElementById('poleDetail').classList.remove('show'); if(_curPopupRid&&_markers[_curPopupRid]){try{_markers[_curPopupRid].closePopup();}catch(e){}} _curPopupRid=null; }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
   /* ===== 照片缩略图 + 大图查看器 ===== */

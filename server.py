@@ -1517,7 +1517,7 @@ if __name__ == "__main__":
     # 启动即后台预热电杆主表缓存：用户第一次点级联下拉就是毫秒级，
     # 而不是在请求里干等 10 页飞书（约 15s）。预热有磁盘缓存兜底，重启用不上。
     def _warm():
-        for tb in (MASTER, SURVEY):
+        for tb in (MASTER, JOB, SURVEY):
             try:
                 n = len(list_all(tb))
                 fmap(tb)     # 字段名→id 映射也一起预热，否则重启后首次请求仍要等 ~1s
