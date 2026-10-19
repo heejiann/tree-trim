@@ -27,6 +27,12 @@ MASTER = os.environ.get("TABLE_MASTER", "tblJ8fUv7M6Qczwm")   # 电杆主数据�
 JOB = os.environ.get("TABLE_JOB", "tblRNU3FSXidthDh")          # 修剪作业记录
 SURVEY = os.environ.get("TABLE_SURVEY", "tblBToYTHkasOirS")     # 勘察记录
 PORT = int(os.environ.get("PORT", "8000"))
+# 高德开放平台「Web服务」key：仅用于新增电杆定位弹窗里的地名/村道/路口搜索。
+# 申请：https://console.amap.com/dev/key/app  （服务平台类型必须选 Web服务）
+# 未配置时 /api/place/search 返回 503，前端提示去配置，不影响其它功能。
+AMAP_KEY = os.environ.get("AMAP_KEY", "").strip()
+# 搜索默认偏好城市（citylimit=false：本地优先、外地同名靠后）。改城市只需改这个环境变量。
+AMAP_CITY = os.environ.get("AMAP_CITY", "佛山").strip()
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://open.feishu.cn/open-apis"
 
@@ -1104,7 +1110,77 @@ class H(BaseHTTPRequestHandler):
             self._send(200, {"items": out, "total": len(all_recs),
                              "located": sum(1 for x in out if x.get("lng") is not None)})
             return
-        # 选杆加定位：级联下拉数据源（供电所→线路→台区→杆号）
+        if u.path == "/api/place/search":
+            # 地名/村道/路口搜索（新增电杆定位弹窗用）。走高德 Web 服务：
+            # 给了 lng/lat 就先「周边搜索」(半径 5km，按距离排序)，附近没有再回退「关键字搜索」。
+            # 返回的 location 是 GCJ02，与前端高德瓦片/点击落点同一坐标系，可直接用。
+            qs = urllib.parse.parse_qs(u.query)
+            kw = (qs.get("kw", [""])[0] or "").strip()
+            city = (qs.get("city", [""])[0] or "").strip()
+            lng = (qs.get("lng", [""])[0] or "").strip()
+            lat = (qs.get("lat", [""])[0] or "").strip()
+            if not AMAP_KEY:
+                self._send(503, {"ok": False, "error": "未配置高德搜索密钥（AMAP_KEY）。请在环境变量中填入高德开放平台「Web服务」key 后重启。申请：https://console.amap.com/dev/key/app"})
+                return
+            if not kw:
+                self._send(400, {"ok": False, "error": "请输入要搜索的地名 / 村道 / 路口"})
+                return
+            q = urllib.parse.quote(kw)
+
+            def _amap(u):
+                """调高德并解析成精简列表；失败抛异常（错误信息已转成中文可操作提示）。"""
+                rq = urllib.request.Request(u, method="GET")
+                rq.add_header("User-Agent", "Mozilla/5.0 senyo-poles")
+                # 国内直连，绕过本机/沙箱 HTTP 代理
+                op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with op.open(rq, timeout=15) as rr:
+                    oo = json.loads(rr.read().decode())
+                if str(oo.get("status")) != "1":
+                    info = str(oo.get("info") or "")
+                    if "KEY" in info.upper():
+                        info += "（密钥无效，或该 key 未开通 Web 服务权限）"
+                    raise RuntimeError("高德返回：" + info)
+                out = []
+                for it in (oo.get("pois") or []):
+                    try:
+                        parts = str(it.get("location") or "").split(",")
+                        if len(parts) < 2:
+                            continue
+                        addr = it.get("address") or ""
+                        if not isinstance(addr, str):
+                            addr = ""
+                        if not addr:
+                            addr = (it.get("pname") or "") + (it.get("adname") or "")
+                        out.append({"name": it.get("name", ""), "address": addr,
+                                    "lng": float(parts[0]), "lat": float(parts[1]),
+                                    "type": it.get("type", "")})
+                    except Exception:
+                        continue
+                return out
+
+            # 注意：city 为空时**不能**拼 &city=（高德会把空 city 当成「限定空城市」→ 恒返回 0 条）
+            text_url = ("https://restapi.amap.com/v3/place/text?keywords=" + q
+                        + "&city=" + urllib.parse.quote(city or AMAP_CITY)
+                        + "&citylimit=false"
+                        + "&extensions=base&offset=15&page=1&output=json&key=" + AMAP_KEY)
+            mode = "text"
+            try:
+                if lng and lat:
+                    mode = "around"
+                    items = _amap("https://restapi.amap.com/v3/place/around?location=" + lng + "," + lat
+                                  + "&keywords=" + q + "&radius=5000&sortrule=distance"
+                                  + "&extensions=base&offset=15&page=1&output=json&key=" + AMAP_KEY)
+                    if not items:      # 附近没搜到（参考点还没定准等）→ 自动回退关键字搜
+                        items = _amap(text_url)
+                        mode = "around_fallback"
+                else:
+                    items = _amap(text_url)
+            except Exception as e:
+                self._send(200, {"ok": False, "error": str(e)})
+                return
+            self._send(200, {"ok": True, "items": items, "count": len(items), "mode": mode})
+            return
+        # 选杆加定位：级联下拉数据源（供电所→变电站→线路→杆号）
         if u.path == "/api/poles/pick":
             qs = urllib.parse.parse_qs(u.query)
             g = lambda k: qs.get(k, [""])[0].strip()

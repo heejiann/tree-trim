@@ -181,6 +181,18 @@
   .mapbox .tip{font-size:12px;color:var(--mut);padding:8px 14px;border-top:1px solid var(--line)}
   .mapbox .ft{padding:12px 14px;display:flex;gap:10px}
   .mapbox .ft button{flex:1}
+  .mapsearch{display:flex;gap:8px;padding:10px 14px 0}
+  .mapsearch input{flex:1;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;min-width:0}
+  .mapsearch button{height:36px;padding:0 16px;border:none;border-radius:8px;background:#0a7a4b;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .mapsearch button:disabled{opacity:.6;cursor:default}
+  .ps-note{padding:7px 14px;font-size:11px;color:#8a6d1f;background:#fffbe6;border-top:1px solid #f2e6b8}
+  .ps-note:empty{display:none}
+  .ps-list{max-height:170px;overflow-y:auto;border-top:1px solid var(--line)}
+  .ps-list:empty{display:none}
+  .ps-item{padding:9px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .ps-item:hover,.ps-item.on{background:#f1f8f4}
+  .ps-item b{display:block;font-size:13px;font-weight:600;color:#123}
+  .ps-item span{display:block;font-size:11px;color:var(--mut);margin-top:2px}
 </style>
 </head>
 <body>
@@ -433,8 +445,14 @@
 <div class="mask" id="mapMask">
   <div class="mapbox">
     <div class="bar"><b>在地图上点击选点</b><span class="link" onclick="closeMap()">取消</span></div>
+    <div class="mapsearch">
+      <input id="placeKw" placeholder="搜村道 / 路口 / 地标，如「丹灶村委」" onkeydown="if(event.key==='Enter')doPlaceSearch()">
+      <button id="psBtn" onclick="doPlaceSearch()">搜索</button>
+    </div>
+    <div class="ps-note" id="psNote"></div>
+    <div class="ps-list" id="psList"></div>
     <div id="map"></div>
-    <div class="tip">点击地图位置落点，再点确认</div>
+    <div class="tip">可先搜索附近位置，点结果快速落点；也可直接在地图上点击微调</div>
     <div class="ft">
       <button class="btn-ghost" onclick="closeMap()">取消</button>
       <button class="btn-primary" onclick="confirmMap()">确认选点</button>
@@ -1422,6 +1440,9 @@ function selectPole(rid,no){
 let _map=null,_marker=null,_pick=null;
 function openMap(){
   document.getElementById('mapMask').classList.add('show');
+  const pk=document.getElementById('placeKw'); if(pk) pk.value='';
+  const pl=document.getElementById('psList'); if(pl) pl.innerHTML='';
+  _placeItems=[]; _psNote('');
   if(!window.L){toast('地图组件加载失败，请检查网络');return;}
   if(_map) return;
   _map=L.map('map').setView([23.13,113.26],13);
@@ -1441,12 +1462,52 @@ function openMap(){
     }, function(err){ toast('默认定位失败：'+(err&&err.message?err.message:'需HTTPS或允许定位权限'),3500); }, {enableHighAccuracy:true,timeout:8000,maximumAge:60000});
   }
 }
-function closeMap(){document.getElementById('mapMask').classList.remove('show');if(_map){_map.remove();_map=null;_marker=null;}}
+function closeMap(){document.getElementById('mapMask').classList.remove('show');if(_map){_map.remove();_map=null;_marker=null;}_placeItems=[];const l=document.getElementById('psList');if(l)l.innerHTML='';_psNote('');}
 function confirmMap(){
-  if(!_pick){toast('请在地图上点击选点');return;}
+  if(!_pick){toast('请在地图上点击选点，或先搜索位置');return;}
   window._lat=_pick.lat;window._lng=_pick.lng;
   document.getElementById('locline').textContent='已选定位：'+_pick.lat.toFixed(6)+', '+_pick.lng.toFixed(6);
   closeMap();
+}
+
+/* ===== 选点弹窗：地名/村道/路口搜索（后端代理高德 Web 服务，见 AMAP_KEY） ===== */
+let _placeItems=[];
+function _psNote(t){const e=document.getElementById('psNote');if(e)e.textContent=t||'';}
+async function doPlaceSearch(){
+  const kwEl=document.getElementById('placeKw');
+  const kw=(kwEl.value||'').trim();
+  if(!kw){_psNote('请输入要搜索的地名 / 村道 / 路口');return;}
+  const list=document.getElementById('psList'), btn=document.getElementById('psBtn');
+  list.innerHTML=''; _psNote('搜索中…'); if(btn)btn.disabled=true;
+  // 有参考坐标时走后端「周边搜索」（半径 3km，按距离排序），比全国关键字搜准得多
+  let q='/api/place/search?kw='+encodeURIComponent(kw);
+  let ref=_pick? _pick : (_map? _map.getCenter() : null);
+  if(ref){ q+='&lng='+ref.lng+'&lat='+ref.lat; }
+  try{
+    const r=await fetch(q,{credentials:'same-origin'});
+    const d=await r.json();
+    if(!d.ok){ _psNote(d.error||'搜索失败'); return; }
+    _placeItems=d.items||[];
+    if(!_placeItems.length){ _psNote('没找到「'+kw+'」。换个说法试试（如去掉「村」字、或加上路名/镇名）'); return; }
+    const mode=d.mode||'text';
+    if(mode==='around_fallback') _psNote('附近没搜到，已按关键词找到 '+_placeItems.length+' 条（本地优先），点一条即可落点');
+    else if(mode==='around') _psNote('附近找到 '+_placeItems.length+' 条（离你最近优先），点一条即可落点');
+    else _psNote('找到 '+_placeItems.length+' 条（本地优先），点一条即可落点');
+    list.innerHTML=_placeItems.map((it,i)=>
+      '<div class="ps-item" onclick="gotoPlace('+i+')"><b>'+esc(it.name)+'</b><span>'+esc(it.address||it.type||'')+'</span></div>').join('');
+  }catch(e){ _psNote('搜索失败，请检查网络后重试'); }
+  finally{ if(btn)btn.disabled=false; }
+}
+function gotoPlace(i){
+  const it=_placeItems[i]; if(!it||!_map) return;
+  _map.setView([it.lat, it.lng], 17);
+  if(_marker) _marker.setLatLng([it.lat, it.lng]); else _marker=L.marker([it.lat, it.lng]).addTo(_map);
+  _pick={lat:it.lat, lng:it.lng};
+  const ll=document.getElementById('locline');
+  if(ll) ll.textContent='已选定位：'+it.lat.toFixed(6)+', '+it.lng.toFixed(6)+'（'+it.name+'）';
+  const items=document.querySelectorAll('.ps-item');
+  for(let k=0;k<items.length;k++) items[k].classList.toggle('on', k===i);
+  _psNote('已按「'+it.name+'」落点。要微调就直接在地图上点一下，再点「确认选点」');
 }
 /* ============ 台风预警图层 ============ */
 let _tyLayer=null,_tyOn=false,_tyTimer=null;
