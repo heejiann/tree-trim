@@ -170,6 +170,9 @@
   .photo-prev .pp .x{position:absolute;top:0;right:0;width:22px;height:22px;line-height:20px;text-align:center;background:rgba(0,0,0,.55);color:#fff;font-size:13px;cursor:pointer;border-radius:0 0 0 8px}
   .photo-hint{font-size:12px;color:var(--mut);margin-top:4px}
   .photo-hint:empty{display:none}
+  .ms{display:flex;flex-wrap:wrap;gap:8px}
+  .ms .chip{padding:7px 13px;border:1px solid var(--line);border-radius:16px;font-size:13px;cursor:pointer;background:#fff;color:#2c3e37;user-select:none}
+  .ms .chip.on{background:#0a7a4b;border-color:#0a7a4b;color:#fff;font-weight:600}
 
   /* 地图选点弹窗 */
   .mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
@@ -299,13 +302,19 @@
           <div class="row">
             <div><label>作业日期 *</label><input id="j_date" type="date"></div>
           </div>
-          <label>作业人员</label>
-          <input id="j_worker" placeholder="姓名">
-          <label>树木品种</label>
-          <input id="j_tree" placeholder="如 榕树">
-          <label>修剪前隐患等级</label>
+          <label>作业人员（可多选）</label>
+          <div class="ms" id="j_worker_ms">
+            <span class="chip" data-v="叶庆峰">叶庆峰</span>
+            <span class="chip" data-v="懂遇巧">懂遇巧</span>
+            <span class="chip" data-v="王亚豪">王亚豪</span>
+            <span class="chip" data-v="冼俊亮">冼俊亮</span>
+            <span class="chip" data-v="杨斌">杨斌</span>
+          </div>
+          <label>备注</label>
+          <input id="j_tree" placeholder="如 9～1杆">
+          <label>市政路段树</label>
           <select id="j_risk">
-            <option>低</option><option>中</option><option>高</option>
+            <option>是</option><option>否</option>
           </select>
           <label>剪下树枝量</label>
           <input id="j_branch" placeholder="如 3 车 / 200kg">
@@ -329,7 +338,7 @@
           <input id="j_attach" type="file" accept="image/*" multiple onchange="jPhotoChanged(this,'attach')">
           <div id="j_prev_attach" class="photo-prev"></div>
           <div class="photo-hint" id="j_count_attach"></div>
-          <label>备注</label>
+          <label>其他说明</label>
           <textarea id="j_note" placeholder="其他情况"></textarea>
           <button class="btn-primary" style="margin-top:14px" onclick="submitJob()">提交作业</button>
           <button class="btn-ghost" style="margin-top:8px" onclick="resetAll()">重新选择电杆</button>
@@ -420,8 +429,8 @@
           <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:8px">
             <input id="ac_line" class="sb-input" placeholder="线路名（模糊，可空）" style="flex:1 1 200px" oninput="acDebounced()">
             <select id="ac_risk" class="sb-input" style="flex:1 1 130px" onchange="loadAcceptPreview()">
-              <option value="">隐患等级（全部）</option>
-              <option>低</option><option>中</option><option>高</option>
+              <option value="">市政路段树（全部）</option>
+              <option>是</option><option>否</option>
             </select>
             <button class="btn-sm" style="flex:0 0 96px" onclick="loadAcceptPreview()">查询</button>
             <button class="btn-ghost btn-sm" style="flex:0 0 80px" onclick="resetAccept()">重置</button>
@@ -525,7 +534,25 @@ async function doLogout(){
 function enterApp(){
   document.getElementById('loginView').classList.add('hidden');
   document.getElementById('appView').classList.remove('hidden');
+  initWorkerChips();
   showPage('home', true);
+}
+
+/* ===== 作业人员多选（点标签选中/取消，可多选） ===== */
+function initWorkerChips(){
+  const box=document.getElementById('j_worker_ms');
+  if(!box || box.dataset.bound) return;
+  box.dataset.bound='1';
+  box.addEventListener('click',e=>{
+    const c=e.target.closest('.chip'); if(!c) return;
+    c.classList.toggle('on');
+  });
+}
+function workerVals(){
+  return [...document.querySelectorAll('#j_worker_ms .chip.on')].map(c=>c.dataset.v);
+}
+function resetWorkerChips(){
+  document.querySelectorAll('#j_worker_ms .chip.on').forEach(c=>c.classList.remove('on'));
 }
 
 /* ===== 页面切换：首页 / 地图 / 作业 ===== */
@@ -833,12 +860,12 @@ async function showDetail(rid){
   jobs.forEach(j=>{
     html += '<div class="job-item"><div class="jt">'+esc(j.ticket||'工作票')+'</div>'
       + '<div class="jm">日期：'+esc(j.date||'-')+'　人员：'+esc(j.worker||'-')+'</div>'
-      + '<div class="jm">隐患：'+esc(j.risk||'-')+'　标示牌：'+esc(j.sign||'-')+'</div>'
+      + '<div class="jm">市政路段树：'+esc(j.risk||'-')+'　标示牌：'+esc(j.sign||'-')+'</div>'
       + photoGroup('修剪前情况', j.before)
       + photoGroup('修剪后情况', j.after)
       + photoGroup('站班会情况', j.station)
       + photoGroup('附件', j.attach)
-      + (j.note?('<div class="jm">备注：'+esc(j.note)+'</div>'):'')
+      + (j.note?('<div class="jm">其他说明：'+esc(j.note)+'</div>'):'')
       + '</div>';
   });
   // 勘察记录（可折叠，位于作业记录下方）
@@ -976,8 +1003,8 @@ function loadAcceptPreview(){
         +'<th style="padding:6px 8px;border:1px solid #ddd">电杆编号</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">作业日期</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">作业人员</th>'
-        +'<th style="padding:6px 8px;border:1px solid #ddd">树木</th>'
-        +'<th style="padding:6px 8px;border:1px solid #ddd">隐患</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">备注</th>'
+        +'<th style="padding:6px 8px;border:1px solid #ddd">市政路段树</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">树枝量</th>'
         +'<th style="padding:6px 8px;border:1px solid #ddd">标示牌</th></tr>';
       items.forEach((it,i)=>{
@@ -1719,7 +1746,7 @@ async function submitJob(){
   const photos={before:await filesToB64(_jPhotos.before),after:await filesToB64(_jPhotos.after),
     station:await filesToB64(_jPhotos.station),attach:await filesToB64(_jPhotos.attach)};
   const body={pole_record_id:window._rid,ticket:document.getElementById('j_ticket').value.trim(),job_date:document.getElementById('j_date').value,
-    worker:document.getElementById('j_worker').value,tree:document.getElementById('j_tree').value,risk:document.getElementById('j_risk').value,
+    worker:workerVals().join('、'),tree:document.getElementById('j_tree').value,risk:document.getElementById('j_risk').value,
     branch:document.getElementById('j_branch').value,sign:document.getElementById('j_sign').value,note:document.getElementById('j_note').value,photos};
   const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
   const d=await r.json();
@@ -1730,6 +1757,7 @@ function resetAll(){
   hide('jobCard');show('searchCard');
   renderRecent();
   casClearSel('job');
+  resetWorkerChips();
   document.getElementById('locline').textContent='未选择定位';
   ['j_ticket','j_worker','j_tree','j_branch','j_note','np_no','np_desc','j_before','j_after','j_station','j_attach'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   resetJPhotos();

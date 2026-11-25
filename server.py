@@ -33,6 +33,13 @@ PORT = int(os.environ.get("PORT", "8000"))
 AMAP_KEY = os.environ.get("AMAP_KEY", "").strip()
 # 搜索默认偏好城市（citylimit=false：本地优先、外地同名靠后）。改城市只需改这个环境变量。
 AMAP_CITY = os.environ.get("AMAP_CITY", "佛山").strip()
+
+# 作业记录表(JOB)字段结构版本。
+# 新结构（2026-11-25 起）：「作业人员」=多选字段、「备注」=杆号段(原树木品种)、
+#                         「市政路段树」=是/否单选、「其他说明」=原备注。
+# 旧结构：「作业人员」=文本、「树木品种」、「修剪前隐患等级」、「备注」。
+# 启动预热时会探测飞书表实际结构并自动切换；读取时新字段为空会自动回退旧字段（兼容历史数据）。
+JOB_SCHEMA_NEW = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = "https://open.feishu.cn/open-apis"
 
@@ -717,6 +724,23 @@ def upload_file(table, filename, raw):
         return None
 
 
+def _flat_text(v):
+    """多选字段(数组) / 文本字段 统一转成展示用字符串。"""
+    if isinstance(v, list):
+        return "、".join(str(x) for x in v if x not in (None, ""))
+    return str(v or "")
+
+
+def _job_field(fv, new_key, old_key=""):
+    """读作业记录字段：新字段优先；新字段为空则回退旧字段名（兼容改名前的历史数据）。"""
+    if JOB_SCHEMA_NEW:
+        v = fv.get(new_key, "")
+        if v not in (None, "", [], ()):
+            return v
+        return fv.get(old_key, "") if old_key else v
+    return fv.get(old_key, "") if old_key else ""
+
+
 def upload_b64(filename, b64):
     try:
         return upload_file(JOB, filename, base64.b64decode(b64))
@@ -808,6 +832,23 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode())
+
+    def _serve_html_file(self, fp):
+        """只读公开服务一个独立 HTML 文件（如砍树勘察的杆位图/杆地图）。"""
+        try:
+            with open(fp, encoding="utf-8") as f:
+                body = f.read()
+        except OSError:
+            self._send(404, {"error": "not found"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # 关缓存，保证重新生成后立刻生效
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.end_headers()
+        self.wfile.write(body.encode())
 
     def _do_export(self, data):
         f = data.get("filters", {}) or {}
@@ -915,19 +956,19 @@ class H(BaseHTTPRequestHandler):
                 continue
             if end and d and d > end:
                 continue
-            rk = fv.get("修剪前隐患等级", "")
+            rk = _job_field(fv, "市政路段树", "修剪前隐患等级")
             if risk and rk != risk:
                 continue
             out.append({
                 "record_id": r["record_id"],
                 "ticket": fv.get("工作票编号", ""),
                 "date": d,
-                "worker": fv.get("作业人员", ""),
-                "tree": fv.get("树木品种", ""),
+                "worker": _flat_text(_job_field(fv, "作业人员", "作业人员(旧)")),
+                "tree": _job_field(fv, "备注", "树木品种"),
                 "risk": rk,
                 "branch": fv.get("剪下树枝量", ""),
                 "sign": fv.get("标示牌状态", ""),
-                "note": fv.get("备注", ""),
+                "note": _job_field(fv, "其他说明", "备注"),
                 "pole_no": pinfo.get("no", ""),
                 "pole_area": pinfo.get("area", ""),
                 "pole_desc": pinfo.get("desc", ""),
@@ -1039,7 +1080,27 @@ class H(BaseHTTPRequestHandler):
             with open(os.path.join(HERE, "index.html"), encoding="utf-8") as f:
                 self._send(200, html=f.read())
             return
+        # —— 砍树勘察项目：杆位图 / 杆地图（独立静态页，公开免登录）——
+        if u.path in ("/polepos", "/polepos/"):
+            self._serve_html_file("/Users/kimho/WorkBuddy/砍树勘察聊天文件录入系统/杆位图.html")
+            return
+        if u.path in ("/polemap", "/polemap/"):
+            self._serve_html_file("/Users/kimho/WorkBuddy/砍树勘察聊天文件录入系统/杆地图.html")
+            return
         if u.path == "/api/health":
+            # 健康检查（Render 等平台探活用，必须免登录且返回 200）。
+            # 另支持 ?detail=1 做「环境变量自检」：部署到云平台时 .env 不会进仓库
+            # （密钥不能进 Git），环境变量必须由平台控制台单独配置，
+            # 访问 /api/health?detail=1 即可看到哪些还没配（只报名字，不返回值）。
+            if "detail" in urllib.parse.parse_qs(u.query):
+                need = [("FEISHU_APP_ID", "飞书应用ID"), ("FEISHU_APP_SECRET", "飞书应用密钥"),
+                        ("FEISHU_APP_TOKEN", "多维表格app_token"), ("LOGIN_USER", "登录账号"),
+                        ("LOGIN_PASS", "登录密码"), ("AMAP_KEY", "高德搜索密钥AMAP_KEY")]
+                missing = [label for k, label in need if not os.environ.get(k, "").strip()]
+                self._send(200, {"ok": True, "missing": missing,
+                                 "hint": ("关键环境变量均已配置 ✓" if not missing
+                                          else "缺少：" + "、".join(missing) + " —— 请在云平台 Environment 变量里补齐并重新部署")})
+                return
             self._send(200, {"ok": True})
             return
         # 台风预警图层：公开气象数据，免登录（避免每次部署后所有人都需重新登录）
@@ -1301,11 +1362,11 @@ class H(BaseHTTPRequestHandler):
                     out.append({"record_id": r["record_id"],
                                 "ticket": fv.get("工作票编号", ""),
                                 "date": ms_to_date(fv.get("作业日期", 0)),
-                                "worker": fv.get("作业人员", ""),
-                                "tree": fv.get("树木品种", ""),
-                                "risk": fv.get("修剪前隐患等级", ""),
+                                "worker": _flat_text(_job_field(fv, "作业人员", "作业人员(旧)")),
+                                "tree": _job_field(fv, "备注", "树木品种"),
+                                "risk": _job_field(fv, "市政路段树", "修剪前隐患等级"),
                                 "sign": fv.get("标示牌状态", ""),
-                                "note": fv.get("备注", ""),
+                                "note": _job_field(fv, "其他说明", "备注"),
                                 "before": attaches_to_list(fv.get("修剪前照片")),
                                 "after": attaches_to_list(fv.get("修剪后照片")),
                                 "station": attaches_to_list(fv.get("站班会情况")),
@@ -1532,15 +1593,29 @@ class H(BaseHTTPRequestHandler):
                 self._send(400, {"error": "请先选择或新建电杆"})
                 return
             photos = data.get("photos", {}) or {}
+            # 作业人员：前端多选 chip 传来的字符串（用、分隔）→ 飞书多选字段要字符串数组
+            wnames = [x for x in re.split(r"[、,，/\s]+", str(data.get("worker", "") or "")) if x]
             fields = {"工作票编号": data.get("ticket", ""),
                       "关联电杆": [rid],   # 双向关联字段(type21)：字符串数组
                       "作业日期": date_to_ms(data.get("job_date", "")),
-                      "作业人员": data.get("worker", ""),
-                      "树木品种": data.get("tree", ""),
-                      "修剪前隐患等级": data.get("risk", ""),
+                      "树木品种": data.get("tree", ""),   # 新结构下写入「备注」
+                      "修剪前隐患等级": data.get("risk", ""),   # 新结构下写入「市政路段树」
                       "剪下树枝量": data.get("branch", ""),
                       "标示牌状态": data.get("sign", ""),
-                      "备注": data.get("note", "")}
+                      "备注": data.get("note", "")}        # 新结构下写入「其他说明」
+            if JOB_SCHEMA_NEW:
+                # 新表：写新字段名
+                fields.pop("树木品种", None)
+                fields.pop("修剪前隐患等级", None)
+                fields.pop("备注", None)
+                fields["备注"] = data.get("tree", "")        # 杆号段，如「9～1杆」
+                fields["市政路段树"] = data.get("risk", "")   # 是 / 否
+                fields["其他说明"] = data.get("note", "")
+                if wnames:
+                    fields["作业人员"] = wnames             # 多选字段：字符串数组
+            else:
+                if wnames:
+                    fields["作业人员"] = "、".join(wnames)
             b = photos_to_attach(photos.get("before"))
             if b: fields["修剪前照片"] = b
             a = photos_to_attach(photos.get("after"))
@@ -1550,6 +1625,11 @@ class H(BaseHTTPRequestHandler):
             at = photos_to_attach(photos.get("attach"))
             if at: fields["附件"] = at
             s, o = create_record(JOB, fields)
+            if s // 100 != 2 or o.get("code") != 0:
+                # 多选字段写入失败时（表未升级到多选）回退成文本写法再试一次
+                if JOB_SCHEMA_NEW and wnames and isinstance(fields.get("作业人员"), list):
+                    fields["作业人员"] = "、".join(wnames)
+                    s, o = create_record(JOB, fields)
             if s // 100 != 2 or o.get("code") != 0:
                 self._send(500, {"error": o.get("msg") or "写入失败", "detail": o})
                 return
@@ -1593,6 +1673,7 @@ if __name__ == "__main__":
     # 启动即后台预热电杆主表缓存：用户第一次点级联下拉就是毫秒级，
     # 而不是在请求里干等 10 页飞书（约 15s）。预热有磁盘缓存兜底，重启用不上。
     def _warm():
+        global JOB_SCHEMA_NEW
         for tb in (MASTER, JOB, SURVEY):
             try:
                 n = len(list_all(tb))
@@ -1600,5 +1681,15 @@ if __name__ == "__main__":
                 print(f"[预热] {tb}: {n} 条")
             except Exception as e:
                 sys.stderr.write(f"[预热失败] {tb}: {e}\n")
+        # 探测作业记录表字段结构（2026-11-25 调整过字段名/类型）：直接读飞书字段列表，
+        # 不依赖 fmap 缓存，避免改名前的旧名字残留导致误判。
+        try:
+            t = get_token()
+            s, o = api("GET", f"/bitable/v1/apps/{APP_TOKEN}/tables/{JOB}/fields?page_size=100", token=t)
+            names = {(x.get("field_name") or "") for x in ((o.get("data") or {}).get("items") or [])}
+            JOB_SCHEMA_NEW = ("市政路段树" in names) and ("其他说明" in names)
+            print(f"[预热] 作业记录表结构: {'新（多选作业人员/备注/市政路段树）' if JOB_SCHEMA_NEW else '旧（文本作业人员/树木品种/隐患等级）'}")
+        except Exception as e:
+            sys.stderr.write(f"[结构探测失败] {e}\n")
     threading.Thread(target=_warm, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

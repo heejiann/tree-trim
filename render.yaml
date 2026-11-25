@@ -1,0 +1,40 @@
+# Render 部署蓝图（Blueprint）
+# 用法：Render 控制台 → New → Blueprint → 选本仓库 → Apply。
+# 所有 sync: false 的变量，Render 会让你在页面上手动填值（值不进 Git，密钥安全）。
+# 填完点 Apply，Render 自动建服务并部署。
+services:
+  - type: web
+    name: senyo-poles
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # —— 飞书多维表格凭证（必填）——
+      - key: FEISHU_APP_ID
+        sync: false
+      - key: FEISHU_APP_SECRET
+        sync: false
+      - key: FEISHU_APP_TOKEN
+        sync: false
+      # —— 三张表的 table_id（一般不用改）——
+      - key: TABLE_MASTER
+        value: tblJ8fUv7M6Qczwm
+      - key: TABLE_JOB
+        value: tblRNU3FSXidthDh
+      - key: TABLE_SURVEY
+        value: tblBToYTHkasOirS
+      # —— 系统登录（部署到公网必须改密码）——
+      - key: LOGIN_USER
+        sync: false
+      - key: LOGIN_PASS
+        sync: false
+      # —— 新增电杆定位弹窗的「地名/村道/路口搜索」——
+      #    高德开放平台「Web服务」类型 key：https://console.amap.com/dev/key/app
+      #    不配则搜索框提示未配置，其余功能不受影响
+      - key: AMAP_KEY
+        sync: false
+      - key: AMAP_CITY
+        value: 佛山

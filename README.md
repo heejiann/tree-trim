@@ -62,8 +62,26 @@ python3 server.py
 ### 方式二：Render（免费 Web Service，闲置会休眠）
 1. 注册 render.com，新建 Web Service，连 GitHub 仓库（需先把本目录推到 GitHub）。
 2. Build Command 留空 / `pip install -r requirements.txt`，Start Command：`python server.py`。
-3. 同上加环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_APP_TOKEN`。
+3. 同上加环境变量 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_APP_TOKEN`；
+   选点弹窗要搜村道/路口的话，再加 `AMAP_KEY`（高德**Web服务** key）。
 4. 拿到 `xxx.onrender.com` 域名（免费档闲置后首次访问约等 30s 冷启动）。
+
+> 也可以直接用仓库里的 **`render.yaml`**：Render → New → Blueprint → 选本仓库 → Apply，
+> Render 会列好所有环境变量让你逐个填值（含密钥），省得自己一个个加。
+
+### ⚠️ 密钥为什么不能跟着代码上传
+`.env` 装的是飞书密钥、高德 key 这类**私密凭证**，一旦提交进 GitHub 就等于公开，
+所以它被 `.gitignore` 排除。**云平台上必须手动配环境变量**，漏配就出现"本地好好的、线上不能用"：
+
+| 漏配的变量 | 线上表现 |
+|---|---|
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 登录后拉不到数据、报飞书接口错误 |
+| `LOGIN_PASS` | 用默认密码，⚠️ 公网不安全 |
+| `AMAP_KEY` | 选点弹窗搜索提示「未配置高德搜索密钥（AMAP_KEY）」 |
+
+**自检**：部署完打开 `https://你的域名/api/health?detail=1`，
+返回 `{"ok":true,"missing":[],"hint":"关键环境变量均已配置 ✓"}` 就说明配齐了；
+`missing` 里列出什么就补什么，补完 Render 会自动重新部署。
 
 ### 接到飞书工作台（可选，同事在飞书里打开）
 1. 飞书开放平台 → 你的自建应用 → 应用功能 → 网页 → H5 主页 URL 填上面域名。

@@ -7,7 +7,7 @@
 #
 # 产出：一个 ZIP，内含 6 份 Word 表单（与用户模板版式一致）+ 字段说明.txt
 #   - 线路走廊清理项目现场工程量签证单.docx   （核心：逐电杆/地点明细）
-#   - 工程量明细表.docx                      （按树种汇总的工程量 BOQ）
+#   - 工程量明细表.docx                      （按备注/杆号段汇总的工程量 BOQ）
 #   - 现场工程量签证表.docx                  （逐作业、含签证叙述）
 #   - 工程量签证表.docx                      （汇总签证）
 #   - 日常维修包项目申请表.docx              （配网适用申请表）
@@ -142,7 +142,7 @@ def _loc(it):
 def _remark(it):
     r = []
     if it.get("risk"):
-        r.append("隐患等级：" + it["risk"])
+        r.append("市政路段树：" + it["risk"])
     if it.get("branch"):
         r.append("剪下树枝量：" + it["branch"])
     if it.get("sign"):
@@ -201,17 +201,17 @@ def build_visa_line_corridor(doc, items, ctx):
     set_col_widths(t, [1.0, 3.0, 1.5, 1.5, 1.5, 1.0, 2.0, 2.0, 1.0, 2.0])
 
 
-# ---------------- 表单 2：工程量明细表（按树种汇总） ----------------
+# ---------------- 表单 2：工程量明细表（按备注/杆号段汇总） ----------------
 def build_detail_table(doc, items, ctx):
     add_title(doc, "工程量明细表")
     add_para(doc, "项目名称：" + ctx["project"])
     add_para(doc, "项目编号：" + (ctx["project_no"] or "________________"))
     doc.add_paragraph("")
 
-    # 按树种汇总
+    # 按备注（杆号段）汇总
     groups = {}
     for it in items:
-        key = it.get("tree", "未注明树种")
+        key = it.get("tree") or "未注明"
         g = groups.setdefault(key, {"cnt": 0, "sample": _loc(it)})
         g["cnt"] += 1
     glist = list(groups.items())
@@ -227,7 +227,7 @@ def build_detail_table(doc, items, ctx):
     for k, (tree, g) in enumerate(glist, 1):
         r = t.rows[k]
         set_cell_text(r.cells[0], k, align=CENTER)
-        mcell(t, k, 1, 2, "树障修剪（%s）" % tree, align=CENTER)
+        mcell(t, k, 1, 2, ("树障修剪（%s）" % tree) if tree else "树障修剪", align=CENTER)
         set_cell_text(r.cells[3], "", align=CENTER)
         set_cell_text(r.cells[4], "处", align=CENTER)
         mcell(t, k, 5, 6, str(g["cnt"]), align=CENTER)
@@ -424,9 +424,9 @@ def _build_notes(items, ctx):
     lines.append("")
     lines.append("字段映射：")
     lines.append("  实施地点/电杆编号 -> 作业记录.电杆编号（+位置描述）")
-    lines.append("  树障种类 -> 作业记录.树木品种")
+    lines.append("  树障种类/备注内容 -> 作业记录.备注")
     lines.append("  施工作业计划编号 -> 作业记录.工作票编号")
-    lines.append("  隐患等级/剪下树枝量/标示牌/备注 -> 作业记录对应字段（汇总进“说明/备注”列）")
+    lines.append("  市政路段树/剪下树枝量/标示牌/其他说明 -> 作业记录对应字段（汇总进“说明/备注”列）")
     lines.append("")
     lines.append("需人工补充的字段（系统暂无对应数据）：")
     lines.append("  1. 规格/胸径：作业记录未采集树障胸径，已在“规格”列填“—”，请按实际胸径补填。")

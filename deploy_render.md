@@ -63,7 +63,7 @@ git push -u origin main
    - **Runtime**：Python 3（自动识别，无需改）
    - **Region**：选离你近的（如 Singapore）
    - **Branch**：`main`（或你提交的分支）
-   - **Build Command**：**留空**（只用 Python 标准库，无依赖）
+   - **Build Command**：`pip install -r requirements.txt`（主服务只用标准库，但「验收导出」依赖 python-docx，不装会导致导出 500；留空时 Render 也会自动装 requirements.txt）
    - **Start Command**：`python server.py`
    - **Instance Type**：**Free**（免费档）
 4. 先别急着部署，先填环境变量（下一步）。
@@ -82,8 +82,25 @@ git push -u origin main
 | `LOGIN_USER` | `admin` | 登录账号 |
 | `LOGIN_PASS` | **改成一个强密码** | ⚠️ 公网谁都能试，别用 `senyo2026` |
 | `PORT` | （不填） | Render 自动注入，`server.py` 会自动读取 |
+| `AMAP_KEY` | 你的高德 **Web服务** key | 选点弹窗里搜村道/路口要用。申请：https://console.amap.com/dev/key/app （服务平台类型必须选「Web服务」） |
+| `AMAP_CITY` | `佛山` | 搜索默认偏好城市，可改 |
 
 > 前两项的值在你电脑的 `web_app/.env` 文件里，直接复制粘贴过来即可。
+
+> **为什么 `.env` 不能直接上传到 GitHub**：`.env` 里是飞书密钥、高德 key 等**私密凭证**，
+> 提交进仓库 = 公网可见。所以它被 `.gitignore` 排除，**云平台上必须手动配上面这些环境变量**。
+> 漏配的表现：登录不了（飞书凭证缺）、或选点弹窗搜索提示「未配置高德搜索密钥」。
+
+### 部署后自检（30 秒）
+
+打开 `https://你的域名/api/health?detail=1`，会直接告诉你缺哪些变量：
+
+```json
+{"ok": true, "missing": [], "hint": "关键环境变量均已配置 ✓"}
+```
+
+`missing` 非空 = 按提示补齐 → 保存后 Render 会自动重新部署 → 再刷新该地址直到 `missing` 为空。
+
 
 ---
 
